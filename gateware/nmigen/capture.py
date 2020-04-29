@@ -85,6 +85,17 @@ class Capture(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
+
+        clk = ClockSignal("sync")
+        m.d.comb += [
+            self.n64.read.i_clk.eq(clk),
+            self.n64.write.i_clk.eq(clk),
+            self.n64.ale_l.i_clk.eq(clk),
+            self.n64.ale_h.i_clk.eq(clk),
+            self.n64.ad.i_clk.eq(clk),
+            self.n64.ad.o_clk.eq(clk)
+        ]
+
         timer = Signal(23)
         m.d.sync += timer.eq(timer+1)
 
@@ -94,11 +105,10 @@ class Capture(Elaboratable):
         m.d.sync += u.tx_rdy.eq(0)
 
         addr = Signal(32)
-        m.submodules.read_edge = read_edge = EdgeDetector(self.n64.read)
-        m.submodules.read_long = read_long = PulseExtender(read_edge.fall, 50)
+        m.submodules.read_edge = read_edge = EdgeDetector(self.n64.read.i)
         
-        with m.If(self.n64.ale_l):
-            with m.If(self.n64.ale_h):
+        with m.If(self.n64.ale_l.i):
+            with m.If(self.n64.ale_h.i):
                 m.d.sync += addr[16:32].eq(self.n64.ad.i)
             with m.Else():
                 m.d.sync += addr[0:16].eq(self.n64.ad.i)
@@ -119,7 +129,7 @@ class Capture(Elaboratable):
         m.submodules.rom_rd = rom_rd = rom.read_port()
         m.d.comb += rom_rd.addr.eq((addr & 0xffff) >> 1)
 
-        addr_depth = 4032//2 + 2
+        addr_depth = 2048
 
         addr_log = Memory(width=32+16, depth=addr_depth)
         addr_log_write_pos = Signal(range(0,addr_depth))
@@ -152,23 +162,6 @@ class Capture(Elaboratable):
             m.d.sync += addr.eq(addr+2)
         with m.Else():
             m.d.sync += self.n64.ad.oe.eq(0)
-
-        # Pass through
-        read_fwd = platform.request("io", 15)
-        m.d.comb += read_fwd.oe.eq(1)
-        m.d.comb += read_fwd.o.eq(self.n64.read)
-
-        write_fwd = platform.request("io", 14)
-        m.d.comb += write_fwd.oe.eq(1)
-        m.d.comb += write_fwd.o.eq(self.n64.write)
-
-        ale_l_fwd = platform.request("io", 13)
-        m.d.comb += ale_l_fwd.oe.eq(1)
-        m.d.comb += ale_l_fwd.o.eq(self.n64.ale_l)
-
-        ale_h_fwd = platform.request("io", 12)
-        m.d.comb += ale_h_fwd.oe.eq(1)
-        m.d.comb += ale_h_fwd.o.eq(self.n64.ale_h)
 
         initial_chars = Array(map(ord, '\x1b[2J\x1b[H' + '\n' * 10))
         chars = Array([*to_hex(addr_log_read_pos), ord(' '), *to_hex(addr_log_read.data[0:32]), ord(' '), *to_hex(addr_log_read.data[32:48]), ord('\r'), ord('\n')])
@@ -243,7 +236,7 @@ class CaptureConcrete(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        n64 = platform.request("n64", 0)
+        n64 = platform.request("n64", xdr={'ad': 1, 'read': 1, 'write': 1, 'ale_l': 1, 'ale_h': 1})
         uart_tx = platform.request("io",6)
         uart_rx = platform.request("io",7)
 
@@ -270,7 +263,6 @@ class CaptureConcretePLL(CaptureConcrete):
             pll.clk_pin.eq(clk_pin),
         ]
         cap = super().elaborate(platform)
-
         m.submodules += DomainRenamer({'sync': 'pll'})(cap)
         return m
 
@@ -313,4 +305,4 @@ if __name__ == "__main__":
             sim.run()
     else:
         platform = N64Platform()
-        platform.build(CaptureConcretePLL(sys_clk = 79.6875), do_program=True)
+        platform.build(CaptureConcretePLL(sys_clk = 50), do_program=True)
