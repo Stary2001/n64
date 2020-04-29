@@ -50,6 +50,12 @@ _io = [
     ("io",    4, Pins("42"), IOStandard("LVCMOS33")),
     ("io",    5, Pins("43"), IOStandard("LVCMOS33")),
 
+    ("n64_data", 0, Pins("23 21 19 17 9 7 3 1 2 4 8 10 18 20 22 24"), IOStandard("LVCMOS33")),
+    ("n64_ale_l", 0, Pins("15"), IOStandard("LVCMOS33")),
+    ("n64_ale_h", 0, Pins("11"), IOStandard("LVCMOS33")),
+    ("n64_read", 0, Pins("12"), IOStandard("LVCMOS33")),
+    ("n64_write", 0, Pins("16"), IOStandard("LVCMOS33")),
+
     # was 52
     ("clk25", 0, Pins("49"), IOStandard("LVCMOS33"))
 ]

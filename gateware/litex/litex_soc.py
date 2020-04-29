@@ -11,11 +11,11 @@ from migen import *
 from migen.genlib.resetsync import AsyncResetSynchronizer
 
 import litex_platform_n64
-from litex.build.io import DDROutput
+from litex.build.io import SDRTristate, SDRInput, DDROutput
 
 from litex.soc.cores.clock import *
 from litex.soc.cores.spi_flash import SpiFlash, SpiFlashSingle
-from litex.soc.cores.gpio import GPIOOut
+from litex.soc.cores.gpio import GPIOIn, GPIOOut
 from litex.soc.integration.soc_core import *
 from litex.soc.integration.builder import *
 
@@ -46,9 +46,10 @@ class _CRG(Module):
         clk25 = platform.request("clk25")
         platform.add_period_constraint(clk25, 1e9/25e6)
         
-        if sys_clk_freq == 25e6:
-            self.comb += self.cd_sys.clk.eq(clk25)
-        else:
+        #if sys_clk_freq == 25e6:
+        #    self.comb += self.cd_sys.clk.eq(clk25)
+        #else:
+        if True:
             # PLL
             self.submodules.pll = pll = iCE40PLL(primitive="SB_PLL40_PAD")
 
@@ -83,15 +84,15 @@ class N64SoC(SoCCore):
     }}
     def __init__(self):
         platform     = litex_platform_n64.Platform()
-        sys_clk_freq = int(37.5e6)
+        sys_clk_freq = int(48e6)
 
         kwargs = {}
         kwargs["clk_freq"] = sys_clk_freq
-        kwargs["cpu_type"] = "picorv32"
+        kwargs["cpu_type"] = "vexriscv"
         kwargs["cpu_variant"] = "minimal"
         
         kwargs["integrated_rom_size"]  = 0
-        kwargs["integrated_sram_size"] = 2*kB
+        kwargs["integrated_sram_size"] = 3*kB
         kwargs["cpu_reset_address"] = self.mem_map["spiflash"] + bios_flash_offset
         # SoCMini ----------------------------------------------------------------------------------
         SoCCore.__init__(self, platform, **kwargs)
@@ -111,7 +112,7 @@ class N64SoC(SoCCore):
         # CRG --------------------------------------------------------------------------------------
         self.submodules.crg = _CRG(platform, sys_clk_freq)
 
-        self.submodules.spiflash = SpiFlashSingle(platform.request("spiflash"), dummy=8, endianness="little", div=4)
+        self.submodules.spiflash = SpiFlash(platform.request("spiflash"), dummy=8, endianness="little")
         self.register_mem("spiflash", self.mem_map["spiflash"], self.spiflash.bus, size=8*mB)
         self.add_csr("spiflash")
 
@@ -121,17 +122,38 @@ class N64SoC(SoCCore):
         self.submodules.led = GPIOOut(platform.request("io", 0))
         self.add_csr("led")
 
-        counter = Signal(32)
-        self.sync += counter.eq(counter + 1)
-        self.comb += platform.request("io",5).eq(counter[25])
+        #counter = Signal(32)
+        #self.sync += counter.eq(counter + 1)
+        #self.comb += platform.request("io",5).eq(counter[25])
 
+        
+        data_bus_oe = Signal()
+
+        self.comb += data_bus_oe.eq(0)
+        data_bus_ios = platform.request("n64_data")
+        data_bus_in = Signal(16)
+        data_bus_out = Signal(16)
+
+        data_bus_oe_expanded = Signal(16)
+
+        for i in range(0,16):
+            self.comb += data_bus_oe_expanded[i].eq(data_bus_oe)
+        self.specials += SDRTristate(io=data_bus_ios, i=data_bus_in, o=data_bus_out, oe=data_bus_oe_expanded)
+
+        ale_l = Signal()
+        ale_h = Signal()
+        self.specials += SDRInput(i=platform.request("n64_ale_l", 0), o=ale_l)
+        self.specials += SDRInput(i=platform.request("n64_ale_h", 0), o=ale_h)
+
+        addr = Signal(32)
+        
+        self.sync += addr.eq(Cat(Mux(ale_l, data_bus_in[0:16], addr[0:16]), Mux(ale_h, data_bus_in[0:16], addr[16:32])))
+        #self.sync += addr.eq(data_bus_in)
 
         # GPIOs ------------------------------------------------------------------------------------
-        #platform.add_extension(_gpios)
-        #self.submodules.gpio0 = GPIOOut(platform.request("io", 1))
-        #self.submodules.gpio1 = GPIOOut(platform.request("io", 2))
-        #self.add_csr("gpio0")
-        #self.add_csr("gpio1")
+        platform.add_extension(_gpios)
+        self.submodules.gpio_addr = GPIOIn(addr)
+        self.add_csr("gpio_addr")
 
 # Load / Flash -------------------------------------------------------------------------------------
 
