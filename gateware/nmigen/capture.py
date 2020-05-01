@@ -1,10 +1,5 @@
-# If the design does not create a "sync" clock domain, it is created by the nMigen build system
-# using the platform default clock (and default reset, if any).
-
 from nmigen import *
 from n64_board import *
-from nmigen.build import Resource, Subsignal, Pins
-from nmigen.lib.fifo import SyncFIFO, SyncFIFOBuffered
 from uart import UART
 from ice40_pll import PLL
 import struct
@@ -81,7 +76,7 @@ class Capture(Elaboratable):
         self.uart_tx = uart_tx
         self.uart_rx = uart_rx
         self.n64 = n64
-        self.sys_clk = sys_clk
+        self.sys_clk = sys_clk * 1e6
 
     def elaborate(self, platform):
         m = Module()
@@ -99,7 +94,7 @@ class Capture(Elaboratable):
         timer = Signal(23)
         m.d.sync += timer.eq(timer+1)
 
-        u = UART(int((self.sys_clk * 1e6) // 115200))
+        u = UART(int(self.sys_clk // 115200))
         m.submodules += u
 
         m.d.sync += u.tx_rdy.eq(0)
@@ -129,10 +124,12 @@ class Capture(Elaboratable):
         m.submodules.rom_rd = rom_rd = rom.read_port()
         m.d.comb += rom_rd.addr.eq((addr & 0xffff) >> 1)
 
-        addr_depth = 2048
+        addr_depth = 256
+        log_skip_depth = (0x1000 - 0x40)//2 + 2 + 2 + (1024*1024)//2 - 250
+        log_skip = Signal(range(0,log_skip_depth+1), reset=log_skip_depth)
 
         addr_log = Memory(width=32+16, depth=addr_depth)
-        addr_log_write_pos = Signal(range(0,addr_depth))
+        addr_log_write_pos = Signal(range(0,addr_depth+1))
         addr_log_read_pos = Signal(range(0,addr_depth))
 
         m.submodules.addr_log_read = addr_log_read = addr_log.read_port()
@@ -146,16 +143,19 @@ class Capture(Elaboratable):
         stb_inc_addr = Signal()
         with m.If(stb_inc_addr):
             # Log addr!
-            with m.If(addr_log_write_pos != addr_depth-1):
+            with m.If(addr_log_write_pos != addr_depth):
                 m.d.sync += addr_log_write_pos.eq(addr_log_write_pos+1)
 
             m.d.sync += stb_inc_addr.eq(0)
 
         with m.If(read_edge.fall):
-            with m.If(addr_log_write_pos != addr_depth-1):
-                m.d.sync += addr_log_write.data.eq(Cat(addr, rom_rd.data))
-                m.d.sync += addr_log_write.en.eq(1)
-                m.d.sync += stb_inc_addr.eq(1)
+            with m.If(log_skip == 0):
+                with m.If(addr_log_write_pos != addr_depth):
+                    m.d.sync += addr_log_write.data.eq(Cat(addr, rom_rd.data))
+                    m.d.sync += addr_log_write.en.eq(1)
+                    m.d.sync += stb_inc_addr.eq(1)
+            with m.Else():
+                m.d.sync += log_skip.eq(log_skip-1)
 
             m.d.sync += self.n64.ad.oe.eq(1)
             m.d.sync += self.n64.ad.o.eq(rom_rd.data)
@@ -166,6 +166,10 @@ class Capture(Elaboratable):
         initial_chars = Array(map(ord, '\x1b[2J\x1b[H' + '\n' * 10))
         chars = Array([*to_hex(addr_log_read_pos), ord(' '), *to_hex(addr_log_read.data[0:32]), ord(' '), *to_hex(addr_log_read.data[32:48]), ord('\r'), ord('\n')])
         tx_counter = Signal(range(0,max(len(chars),len(initial_chars))))
+
+        wait_full_secs = 1
+        wait_full_clks = int(self.sys_clk*wait_full_secs)
+        wait_full_timer = Signal(range(0, wait_full_clks+1), reset=wait_full_clks)
 
         with m.FSM() as fsm:
             with m.State("send_initial_char"):
@@ -189,7 +193,8 @@ class Capture(Elaboratable):
             #######################################
 
             with m.State("wait_full"):
-                with m.If(addr_log_write_pos == addr_depth-1):
+                m.d.sync += wait_full_timer.eq(wait_full_timer-1)
+                with m.If((addr_log_write_pos == addr_depth) | (wait_full_timer == 0)):
                     m.next = "send_char"
             with m.State("send_char"):
                 m.d.sync += u.tx_data.eq(chars[tx_counter])
