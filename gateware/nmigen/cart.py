@@ -50,33 +50,14 @@ class EdgeDetector(Elaboratable):
 
         return m
 
-class PulseExtender(Elaboratable):
-    def __init__(self, pin, ctr):
-        self.i = pin
-        self.o = Signal()
-        self.val = ctr
-
-    def elaborate(self, platform):
-        m = Module()
-        fall_counter = Signal(range(0,self.val+1))
-
-        with m.If(self.i):
-            m.d.sync += fall_counter.eq(self.val)
-            m.d.sync += self.o.eq(1)
-        with m.Else():
-            with m.If(fall_counter != 0):
-                m.d.sync += fall_counter.eq(fall_counter-1)
-            with m.Else():
-                m.d.sync += self.o.eq(0)
-
-        return m
-
-class Capture(Elaboratable):
-    def __init__(self, n64, uart_tx, uart_rx, sys_clk):
+class Cart(Elaboratable):
+    def __init__(self, n64, uart_tx, uart_rx, sys_clk, uart_baud, uart_delay):
         self.uart_tx = uart_tx
         self.uart_rx = uart_rx
         self.n64 = n64
         self.sys_clk = sys_clk * 1e6
+        self.uart_baud = uart_baud
+        self.uart_delay = uart_delay
 
     def elaborate(self, platform):
         m = Module()
@@ -94,7 +75,7 @@ class Capture(Elaboratable):
         timer = Signal(23)
         m.d.sync += timer.eq(timer+1)
 
-        u = UART(int(self.sys_clk // 115200))
+        u = UART(int(self.sys_clk // self.uart_baud))
         m.submodules += u
 
         m.d.sync += u.tx_rdy.eq(0)
@@ -185,9 +166,9 @@ class Capture(Elaboratable):
                         m.d.sync += tx_counter.eq(tx_counter+1)
                         m.next = "initial_wait"
             with m.State("initial_wait"):
-                wait_sig = Signal(range(0,10000))
+                wait_sig = Signal(range(0,self.uart_delay))
                 m.d.sync += wait_sig.eq(wait_sig+1)
-                with m.If(wait_sig == 10000-1):
+                with m.If(wait_sig == self.uart_delay-1):
                     m.next = "send_initial_char"
 
             #######################################
@@ -209,22 +190,21 @@ class Capture(Elaboratable):
                         m.d.sync += tx_counter.eq(tx_counter+1)
                         m.next = "wait"
             with m.State("wait"):
-                wait_sig = Signal(range(0,10000))
+                wait_sig = Signal(range(0,self.uart_delay))
                 m.d.sync += wait_sig.eq(wait_sig+1)
-                with m.If(wait_sig == 10900-1):
+                with m.If(wait_sig == self.uart_delay-1):
                     m.next = "send_char"
 
             with m.State("actual_delay"):
-                wait_sig = Signal(range(0,100000))
+                wait_sig = Signal(range(0,self.uart_delay))
                 m.d.sync += wait_sig.eq(wait_sig+1)
 
-                with m.If(wait_sig == 100000-2):
+                with m.If(wait_sig == self.uart_delay-2):
                     with m.If(addr_log_read_pos != addr_depth-1):
                         m.d.sync += addr_log_read_pos.eq(addr_log_read_pos+1)
                     with m.Else():
                         m.next = "done"
-                with m.If(wait_sig == 100000-1):
-
+                with m.If(wait_sig == self.uart_delay-1):
                     m.next = "send_char"
             with m.State("done"):
                 pass
@@ -234,9 +214,11 @@ class Capture(Elaboratable):
 
         return m
 
-class CaptureConcrete(Elaboratable):
-    def __init__(self, sys_clk):
+class CartConcrete(Elaboratable):
+    def __init__(self, sys_clk, uart_baud, uart_delay):
         self.sys_clk = sys_clk
+        self.uart_baud = uart_baud
+        self.uart_delay = uart_delay
 
     def elaborate(self, platform):
         m = Module()
@@ -248,14 +230,14 @@ class CaptureConcrete(Elaboratable):
         m.d.comb += uart_tx.oe.eq(1)
         m.d.comb += uart_rx.oe.eq(0)
 
-        cap = Capture(n64, uart_tx.o, uart_rx.i, self.sys_clk)
+        cap = Cart(n64, uart_tx.o, uart_rx.i, self.sys_clk, self.uart_baud, self.uart_delay)
         m.submodules.cap = cap
 
         return m
 
-class CaptureConcretePLL(CaptureConcrete):
-    def __init__(self, sys_clk):
-        super().__init__(sys_clk)
+class CartConcretePLL(CartConcrete):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def elaborate(self, platform):
         m = Module()
@@ -271,18 +253,26 @@ class CaptureConcretePLL(CaptureConcrete):
         m.submodules += DomainRenamer({'sync': 'pll'})(cap)
         return m
 
-class MockTristate():
-    def __init__(self, width=1):
-        self.i = Signal(width)
-        self.o = Signal(width)
-        self.oe = Signal()
+class MockIO():
+    def __init__(self, name, dir, width=1):
+        if dir == "i" or dir == "io":
+            self.i = Signal(width, name=name+"_i")
+            self.i_clk = Signal(name=name+"_i_clk")
+
+        if dir == "o" or dir == "io":
+            self.o = Signal(width, name=name+"_o")
+            self.o_clk = Signal(name=name+"_o_clk")
+
+        if dir == "io":
+            self.oe = Signal(name=name+"_oe")
 
 class MockN64():
     def __init__(self):
-        self.ad = MockTristate(16)
-        self.ale_h = Signal()
-        self.ale_l = Signal()
-        self.read = Signal()
+        self.ad = MockIO("n64_data", "io", 16)
+        self.ale_h = MockIO("n64_ale_h", "i")
+        self.ale_l = MockIO("n64_ale_l", "i")
+        self.read = MockIO("n64_read", "i")
+        self.write = MockIO("n64_write", "i")
 
 if __name__ == "__main__":
     import sys
@@ -291,23 +281,79 @@ if __name__ == "__main__":
         uart_tx = Signal()
         uart_rx = Signal()
 
-        mod = Blinky(n64, uart_tx, uart_rx)
+        mod = Cart(n64, uart_tx, uart_rx, sys_clk=50, uart_baud = 12.5e6, uart_delay = 2)
 
         from nmigen.back import pysim
 
         sim = pysim.Simulator(mod)
-        ports = [uart_rx, uart_tx]
+        ports = [uart_tx, n64.ale_h.i, n64.ale_l.i, n64.read.i, n64.write.i, n64.ad.i, n64.ad.o]
 
-        with sim.write_vcd(vcd_file=open("traces/uart.vcd", "w"),
-                gtkw_file=open("traces/uart.gtkw", "w"),
+        with sim.write_vcd(vcd_file=open("/tmp/cart.vcd", "w"),
+                gtkw_file=open("/tmp/cart.gtkw", "w"),
                 traces=ports):
-            sim.add_clock(60e-6)
+            sim.add_clock(1/50e6)
+
+            def drive_n64():
+                yield n64.ale_l.i.eq(0)
+                yield n64.ale_h.i.eq(0)
+                yield n64.write.i.eq(1)
+                yield n64.read.i.eq(1)
+                yield n64.ad.i.eq(0)
+
+                def delay(n):
+                    for i in range(0,n):
+                        yield
+
+                def block_read(addr, n_bytes):
+                    #         a    b  c
+                    #       <----><--><-->
+                    # ale_l       --------
+                    # ____________|      |_________
+                    #
+                    # ale_h ----------
+                    # ______|        |_____________
+                    # 
+
+                    a = 5
+                    b = 10
+                    c = 5
+
+                    yield n64.ale_h.i.eq(1)
+                    yield n64.ad.i.eq((addr >> 16) & 0xffff)
+                    yield from delay(a)
+                    yield n64.ale_l.i.eq(1)
+                    yield from delay(b-3)
+                    yield n64.ale_h.i.eq(0)
+                    yield from delay(3)
+                    yield n64.ad.i.eq(addr & 0xffff)
+                    yield from delay(c)
+                    yield n64.ale_l.i.eq(0)
+
+                    yield from delay(100)
+
+                    n = n_bytes//2
+                    for i in range(0,n):
+                        yield n64.read.i.eq(1)
+                        yield from delay(5)
+                        yield n64.read.i.eq(0)
+                        yield from delay(15)
+
+                yield from block_read(0x10000000, 4)
+
+                for i in range(0x40, 0x1000, 4):
+                    yield from block_read(0x10000000 + i, 4)
+
+                for i in range(8, 0x40, 4):
+                    yield from block_read(0x10000000 + i, 4)
+
+                #for i in range()
 
             def do_nothing():
                 for i in range(0, 10000):
                     yield
             sim.add_sync_process(do_nothing)
+            sim.add_sync_process(drive_n64)
             sim.run()
     else:
         platform = N64Platform()
-        platform.build(CaptureConcretePLL(sys_clk = 50), do_program=True)
+        platform.build(CartConcretePLL(sys_clk = 50, uart_baud = 115200, uart_delay = 10000), do_program=True)
