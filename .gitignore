@@ -1,0 +1,3 @@
+__pycache__
+gateware/nmigen/build
+gateware/litex/build
