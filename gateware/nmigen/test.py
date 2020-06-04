@@ -53,8 +53,10 @@ class MockN64(Elaboratable):
         delays = [1, 120, 80, 50, 50, 1040, 300, 60, 300, 60]
         # [11, 7, 3, 3, 52, 16, 4, 16, 4]
         delays = list(map(lambda a: math.ceil(a*1e-9/clk_period)-1, delays))
-        import sys
-        sys.stderr.write(str(delays)+"\n")
+        
+        #import sys
+        #sys.stderr.write(str(delays)+"\n")
+
         delays = Array(delays)
         signals = Array([
             ale_h.i, # rise

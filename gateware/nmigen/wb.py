@@ -1,62 +1,59 @@
 from nmigen import *
 
-class WishboneBus(Elaboratable):
-    def __init__(self):
-        self.cyc = Signal()
-        self.stb = Signal()
-        self.ack = Signal()
-        self.we = Signal()
-        self.sel = Signal(4)
+class WishboneBus(Record):
+    def __init__(self, data_width=32, addr_width=32):
+        super().__init__([
+            ("cyc", 1),
+            ("stb", 1),
+            ("ack", 1),
+            ("we", 1),
+            ("sel", data_width//8),
+            ("addr", addr_width),
+            ("r_dat", data_width),
+            ("w_dat", data_width)
+            ])
 
-        self.addr = Signal(32) # width
-        self.dat_r = Signal(32)
 
-    def elaborate(self, platform):
-        m=Module()
-        return m
+        """o_o_ibus_adr = self.ibus.addr,
+            o_o_ibus_cyc = self.ibus.cyc,
+            i_i_ibus_rdt = self.ibus.r_dat,
+            i_i_ibus_ack = self.ibus.ack,"""
 
-class WishboneMaster(Elaboratable):
-    def __init__(self):
+    def connect_to(self, other):
+        return [
+            other.cyc.eq(self.cyc),
+            other.stb.eq(self.stb),
+            other.sel.eq(self.sel),
+            other.we.eq(self.we),
+            other.addr.eq(self.addr),
+            other.w_dat.eq(self.w_dat),
+
+            self.ack.eq(other.ack),
+            self.r_dat.eq(other.r_dat)
+        ]
+
+class WishboneROM(Elaboratable):
+    def __init__(self, init):
         self.bus = WishboneBus()
-        self.addr_in = Signal(32)
-        self.data = Signal(32)
-        self.read = Signal()
-        self.ready = Signal()
+        self.init = init
 
     def elaborate(self, platform):
         m = Module()
-        m.submodules += self.bus
 
-        m.d.comb += [
-            self.bus.sel.eq(0b1111)
-        ]
+        backing = Memory(width=32, depth=len(self.init), init=self.init)
+        m.submodules.rd = rd = backing.read_port()
 
-        self.bus_addr_start = Signal(32, reset=0x40000000)
-        # 0x40000000 dram
-        # 0x20000000 spiflash
+        stb_delayed = Signal()
 
-        #m.d.sync += self.wb.stb.eq(0)
-        with m.FSM() as fsm:
-            with m.State("idle"):
-                with m.If(self.read):
-                    # start bus cycle
-                    m.d.sync += [
-                        self.bus.addr.eq((self.addr_in + self.bus_addr_start)>>2),
-                        self.bus.we.eq(0),
-                        self.bus.cyc.eq(1),
-                        self.bus.stb.eq(1),
+        m.d.sync += self.bus.r_dat.eq(0)
+        with m.If(self.bus.stb):
+            m.d.sync += rd.addr.eq(self.bus.addr)
+            m.d.sync += stb_delayed.eq(1)
 
-                        self.ready.eq(0)
-                    ]
-                    m.next = "wait_ack"
-            with m.State("wait_ack"):
-                with m.If(self.bus.ack):
-                    m.d.sync += [
-                        self.data.eq(self.bus.dat_r),
-                        self.ready.eq(1),
+        m.d.sync += self.bus.ack.eq(0)
+        with m.If(stb_delayed):
+            m.d.sync += stb_delayed.eq(0)
+            m.d.sync += self.bus.r_dat.eq(rd.data)
+            m.d.sync += self.bus.ack.eq(1)
 
-                        self.bus.stb.eq(0),
-                        self.bus.cyc.eq(0)
-                    ]
-                    m.next = "idle"
         return m

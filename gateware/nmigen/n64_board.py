@@ -65,14 +65,14 @@ class N64Platform(LatticeICE40Platform):
         Resource("io", 6, Pins("44", dir="io")),
         Resource("io", 7, Pins("45", dir="io")),
 
-        Resource("io", 8, Pins("73", dir="io")),
-        Resource("io", 9, Pins("75", dir="io")),
-        Resource("io", 10, Pins("78", dir="io")),
-        Resource("io", 11, Pins("80", dir="io")),
-        Resource("io", 12, Pins("82", dir="io")),
-        Resource("io", 13, Pins("84", dir="io")),
-        Resource("io", 14, Pins("87", dir="io")),
-        Resource("io", 15, Pins("88", dir="io")),
+        Resource("io", 15, Pins("73", dir="io")),
+        Resource("io", 14, Pins("75", dir="io")),
+        Resource("io", 13, Pins("78", dir="io")),
+        Resource("io", 12, Pins("80", dir="io")),
+        Resource("io", 11, Pins("82", dir="io")),
+        Resource("io", 10, Pins("84", dir="io")),
+        Resource("io", 9, Pins("87", dir="io")),
+        Resource("io", 8, Pins("88", dir="io")),
 
         Resource("n64", 0, 
             Subsignal("ad", Pins("23 21 19 17 9 7 3 1 2 4 8 10 18 20 22 24", dir="io")),
@@ -80,6 +80,22 @@ class N64Platform(LatticeICE40Platform):
             Subsignal("write", Pins("16", dir="i")),
             Subsignal("ale_l", Pins("15", dir="i")),
             Subsignal("ale_h", Pins("11", dir="i")),
+        ),
+
+        SDRAMResource(0,
+            clk = "113",
+            cke = "112",
+            cs = "110",
+            we = "116",
+            ras = "114",
+            cas = "115",
+
+            ba = "90 91",
+            a = "93 94 95 96 97 98 99 101 102 104 105 106 107",
+            dq = "135 134 130 129 128 125 124 122 136 137 138 139 141 142 143 144",
+            dqm = "118 117",
+
+            attrs = Attrs(IO_STANDARD = "SB_LVCMOS")
         ),
     ]
 
@@ -94,3 +110,4 @@ class N64Platform(LatticeICE40Platform):
 if __name__ == "__main__":
     from .test.blinky import *
     N64Platform().build(Blinky(), do_program=True)
+
