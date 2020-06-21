@@ -64,7 +64,7 @@ class SDRAMController(Elaboratable):
 		]
 
 		cmd = Signal(4)
-		m.d.comb += Cat(ram.we, ram.cas, ram.ras, ram.cs).eq(cmd)
+		m.d.comb += Cat(ram.we, ram.cas, ram.ras, ram.cs).eq(~cmd)
 		#with m.If(init_done):
 		m.d.sync += cmd.eq(0b0111) # n_CS low - nop
 		#with m.Else():

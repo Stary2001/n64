@@ -6,6 +6,7 @@
 import os
 import argparse
 import sys
+import subprocess
 
 from migen import *
 from migen.genlib.resetsync import AsyncResetSynchronizer
@@ -18,13 +19,20 @@ from litex.soc.cores.spi_flash import SpiFlash, SpiFlashSingle
 from litex.soc.cores.gpio import GPIOIn, GPIOOut
 from litex.soc.integration.soc_core import *
 from litex.soc.integration.builder import *
-
+from litex.soc.integration.common import *
+from litex.soc.interconnect import wishbone
 from litex.build.generic_platform import *
 
 from litedram.modules import IS42S16320
 from litedram.phy import GENSDRPHY
 
 from litex_clock import iCE40PLL_90deg
+
+# Simulation
+
+from litex.build.sim.config import SimConfig
+from litedram.phy.model import SDRAMPHYModel
+from litex.soc.cores import uart
 
 # IOs ----------------------------------------------------------------------------------------------
 
@@ -78,12 +86,22 @@ kB = 1024
 mB = 1024*kB
 bios_flash_offset = 0x40000
 
+from sim import get_sdram_phy_settings
+
 class N64SoC(SoCCore):
     mem_map = {**SoCCore.mem_map, **{
         "spiflash": 0x20000000,  # (default shadow @0xa0000000)
     }}
-    def __init__(self):
-        platform     = litex_platform_n64.Platform()
+
+    def __init__(self, simulate, sdram_init=[], with_analyzer=False):
+
+        self.simulate = simulate
+
+        if simulate:
+            platform = litex_platform_n64.N64SimPlatform()
+        else:
+            platform = litex_platform_n64.Platform()
+
         sys_clk_freq = int(48e6)
 
         kwargs = {}
@@ -92,13 +110,37 @@ class N64SoC(SoCCore):
         kwargs["cpu_variant"] = "minimal"
         
         kwargs["integrated_rom_size"]  = 0
-        kwargs["integrated_sram_size"] = 3*kB
+        kwargs["integrated_sram_size"] = 2*kB
         kwargs["cpu_reset_address"] = self.mem_map["spiflash"] + bios_flash_offset
+
+        if simulate:
+            kwargs["with_uart"] = False
+            kwargs["with_ethernet"] = False
+
         # SoCMini ----------------------------------------------------------------------------------
         SoCCore.__init__(self, platform, **kwargs)
 
+        if simulate:
+            self.submodules.uart_phy = uart.RS232PHYModel(platform.request("serial"))
+            self.submodules.uart = uart.UART(self.uart_phy)
+            self.add_csr("uart")
+            self.add_interrupt("uart")
         if not self.integrated_main_ram_size:
-            self.submodules.sdrphy = GENSDRPHY(platform.request("sdram"))
+            if simulate:
+                sdram_data_width = 16
+                sdram_module     = IS42S16320(sys_clk_freq, "1:1")
+                phy_settings     = get_sdram_phy_settings(
+                    memtype    = sdram_module.memtype,
+                    data_width = sdram_data_width,
+                    clk_freq   = sys_clk_freq)
+
+                self.submodules.sdrphy = SDRAMPHYModel(sdram_module, phy_settings, init=sdram_init)
+
+                self.add_constant("MEMTEST_DATA_SIZE", 8*1024)
+                self.add_constant("MEMTEST_ADDR_SIZE", 8*1024)
+            else:
+                self.submodules.sdrphy = GENSDRPHY(platform.request("sdram"))
+
             self.add_sdram("sdram",
                 phy                     = self.sdrphy,
                 module                  = IS42S16320(sys_clk_freq, "1:1"),
@@ -110,50 +152,42 @@ class N64SoC(SoCCore):
             )
 
         # CRG --------------------------------------------------------------------------------------
-        self.submodules.crg = _CRG(platform, sys_clk_freq)
+        if simulate:
+            self.submodules.crg = CRG(platform.request("sys_clk"))
+        else:
+            self.submodules.crg = _CRG(platform, sys_clk_freq)
 
-        self.submodules.spiflash = SpiFlash(platform.request("spiflash"), dummy=8, endianness="little")
-        self.register_mem("spiflash", self.mem_map["spiflash"], self.spiflash.bus, size=8*mB)
-        self.add_csr("spiflash")
+        if simulate:
+            integrated_rom_init = get_mem_data("build/software/bios/bios.bin", "little")
 
-        self.add_memory_region("rom", self.mem_map["spiflash"] + bios_flash_offset, 32*kB, type="cached+linker")
+            self.add_rom("rom", self.cpu.reset_address, len(integrated_rom_init)*4, integrated_rom_init)
+        else:
+            self.submodules.spiflash = SpiFlash(platform.request("spiflash"), dummy=8, endianness="little")
+            self.register_mem("spiflash", self.mem_map["spiflash"], self.spiflash.bus, size=8*mB)
+            self.add_csr("spiflash")
+            self.add_memory_region("rom", self.mem_map["spiflash"] + bios_flash_offset, 32*kB, type="cached+linker")
+
 
         # Led --------------------------------------------------------------------------------------
-        self.submodules.led = GPIOOut(platform.request("io", 0))
+        self.submodules.led = GPIOOut(platform.request("io0"))
         self.add_csr("led")
 
-        #counter = Signal(32)
-        #self.sync += counter.eq(counter + 1)
-        #self.comb += platform.request("io",5).eq(counter[25])
-
-        
-        data_bus_oe = Signal()
-
-        self.comb += data_bus_oe.eq(0)
-        data_bus_ios = platform.request("n64_data")
-        data_bus_in = Signal(16)
-        data_bus_out = Signal(16)
-
-        data_bus_oe_expanded = Signal(16)
-
-        for i in range(0,16):
-            self.comb += data_bus_oe_expanded[i].eq(data_bus_oe)
-        self.specials += SDRTristate(io=data_bus_ios, i=data_bus_in, o=data_bus_out, oe=data_bus_oe_expanded)
-
-        ale_l = Signal()
-        ale_h = Signal()
-        self.specials += SDRInput(i=platform.request("n64_ale_l", 0), o=ale_l)
-        self.specials += SDRInput(i=platform.request("n64_ale_h", 0), o=ale_h)
-
-        addr = Signal(32)
-        
-        self.sync += addr.eq(Cat(Mux(ale_l, data_bus_in[0:16], addr[0:16]), Mux(ale_h, data_bus_in[0:16], addr[16:32])))
-        #self.sync += addr.eq(data_bus_in)
-
         # GPIOs ------------------------------------------------------------------------------------
+
+        self.submodules.gpio0 = GPIOOut(platform.request("io1"))
+        self.add_csr("gpio0")
+        self.submodules.gpio1 = GPIOOut(platform.request("io2"))
+        self.add_csr("gpio1")
         platform.add_extension(_gpios)
-        self.submodules.gpio_addr = GPIOIn(addr)
-        self.add_csr("gpio_addr")
+
+        if with_analyzer:
+            analyzer_signals = [
+                self.cpu.ibus,
+                self.cpu.dbus
+            ]
+            self.submodules.analyzer = LiteScopeAnalyzer(analyzer_signals, 512)
+            self.add_csr("analyzer")
+
 
 # Load / Flash -------------------------------------------------------------------------------------
 
@@ -161,23 +195,48 @@ class N64SoC(SoCCore):
 
 def main():
     parser = argparse.ArgumentParser(description="do the thing")
-    parser.add_argument("--build",       action="store_true",      help="build bitstream")
     #parser.add_argument("--load",        action="store_true",      help="load bitstream")
     parser.add_argument("--flash",       action="store_true",      help="flash bitstream")
+    parser.add_argument("--sim",       action="store_true",      help="simulate")
+    parser.add_argument("--threads",   default=1,      help="simulate")
+    parser.add_argument("--trace",              action="store_true",    help="Enable VCD tracing")
+    parser.add_argument("--trace-start",        default=0,              help="Cycle to start VCD tracing")
+    parser.add_argument("--trace-end",          default=-1,             help="Cycle to end VCD tracing")
+    parser.add_argument("--opt-level",          default="O3",           help="Compilation optimization level")
+    parser.add_argument("--sdram-init",          default=None,           help="SDRAM init file")
+
     args = parser.parse_args()
 
-    soc     = N64SoC()
-    builder = Builder(soc, output_dir="build", csr_csv="scripts/csr.csv")
-    builder.build(build_name="n64", run=args.build)
+    sim_config = SimConfig(default_clk="sys_clk")
+    sim_config.add_module("serial2console", "serial")
 
-    #if args.load:
-    #    load()
+    build_kwargs = {}
+
+    if args.sim:
+        build_kwargs["threads"] = args.threads
+        build_kwargs["sim_config"] = sim_config
+        build_kwargs["opt_level"]   = args.opt_level
+        build_kwargs["trace"]       = args.trace
+        build_kwargs["trace_start"] = int(args.trace_start)
+        build_kwargs["trace_end"]   = int(args.trace_end)
+
+    soc = N64SoC(
+        simulate=args.sim, 
+        sdram_init     = [] if args.sdram_init is None else get_mem_data(args.sdram_init, "little"),
+    )
+
+    builder = Builder(soc, output_dir="build", csr_csv="scripts/csr.csv")
+    builder.build(run=not (args.sim or args.flash), **build_kwargs)
 
     if args.flash:
         from litex.build.lattice.programmer import IceStormProgrammer
         prog = IceStormProgrammer()
+        #prog.flash(4194304,        "sm64_swapped_half.n64")
         prog.flash(bios_flash_offset, "build/software/bios/bios.bin")
-        prog.flash(0x00000000,        "build/gateware/n64.bin")
+        prog.flash(0x00000000,        "build/gateware/litex_platform_n64.bin")
+
+    if args.sim:
+        builder.build(build=False, **build_kwargs)
 
 if __name__ == "__main__":
     main()

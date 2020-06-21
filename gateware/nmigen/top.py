@@ -203,8 +203,8 @@ class CartConcrete(Elaboratable):
         clk = ClockSignal()
         sdram_ctrl = top.sdram.sdram
         m.d.comb += [
-            sdram.clk.o0.eq(1),
-            sdram.clk.o1.eq(0),
+            sdram.clk.o0.eq(0),
+            sdram.clk.o1.eq(1),
             sdram.clk.o_clk.eq(clk),
 
             sdram.clk_en.o.eq(sdram_ctrl.cke),
