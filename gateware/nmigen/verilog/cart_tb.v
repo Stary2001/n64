@@ -48,7 +48,7 @@ module tb_top();
     rst = 0;
 
     #5  rst = 1;
-    #10 rst = 0;
+    #50 rst = 0;
 
     #1000000 $finish();
  end

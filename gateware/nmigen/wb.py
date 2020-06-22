@@ -19,6 +19,9 @@ class WishboneBus(Record):
             i_i_ibus_rdt = self.ibus.r_dat,
             i_i_ibus_ack = self.ibus.ack,"""
 
+    # connect cpu bus "input" -> rom "output"   
+    # bus.connect_to(rom)
+
     def connect_to(self, other):
         return [
             other.cyc.eq(self.cyc),
@@ -46,14 +49,17 @@ class WishboneROM(Elaboratable):
         stb_delayed = Signal()
 
         m.d.sync += self.bus.r_dat.eq(0)
-        with m.If(self.bus.stb):
+        with m.If(self.bus.cyc):
             m.d.sync += rd.addr.eq(self.bus.addr)
             m.d.sync += stb_delayed.eq(1)
 
         m.d.sync += self.bus.ack.eq(0)
         with m.If(stb_delayed):
-            m.d.sync += stb_delayed.eq(0)
             m.d.sync += self.bus.r_dat.eq(rd.data)
             m.d.sync += self.bus.ack.eq(1)
+
+        with m.If((self.bus.cyc == 0) & stb_delayed):
+            m.d.sync += stb_delayed.eq(0)
+            m.d.sync += self.bus.ack.eq(0)
 
         return m

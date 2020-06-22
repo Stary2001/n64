@@ -43,8 +43,8 @@ class SERV(Elaboratable):
             i_i_dbus_ack = self.dbus.ack,
         )
 
-        m.d.comb += self.ibus.stb.eq(self.ibus.cyc)
-        m.d.comb += self.dbus.stb.eq(self.dbus.cyc)
+        #m.d.comb += self.ibus.stb.eq(self.ibus.cyc)
+        #m.d.comb += self.dbus.stb.eq(self.dbus.cyc)
 
         """  (
         input wire         clk,

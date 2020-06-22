@@ -14,7 +14,7 @@ class Top(Elaboratable):
     def __init__(self, sys_clk):
         self.sys_clk = sys_clk * 1e6
         self.cart = Cart(sys_clk)
-        #self.cpu = SERV()
+        self.cpu = SERV()
         self.sdram = SDRAMController(self.sys_clk)
         self.uart = UART(int(self.sys_clk//115200))
 
@@ -24,13 +24,14 @@ class Top(Elaboratable):
         m = Module()
         
         m.submodules += self.cart
-        #m.submodules += self.cpu
+        m.submodules += self.cpu
         m.submodules += self.sdram
 
-        #rom = WishboneROM(init=[0x00000013] * 128)
-        #m.submodules += rom
-        #m.d.comb += self.cpu.ibus.connect_to(rom.bus)
-        #m.d.comb += self.cpu.dbus.connect_to(rom.bus)
+        rom = WishboneROM(init=[0x00000013] * 128)
+        m.submodules += rom
+        
+        m.d.comb += self.cpu.ibus.connect_to(rom.bus)
+        #m.d.comb += rom.bus.connect_to(self.cpu.dbus)
 
         a_counter = Signal(16)
         d_counter = Signal(16)
@@ -303,10 +304,10 @@ class CartSim(Elaboratable):
             i_Ba = sdram_io.ba,
             i_Clk = ClockSignal(),
             i_Cke = sdram_io.cke,
-            i_Cs_n = sdram_io.cs,
-            i_Ras_n = sdram_io.ras,
-            i_Cas_n = sdram_io.cas,
-            i_We_n = sdram_io.we,
+            i_Cs_n = ~sdram_io.cs,
+            i_Ras_n = ~sdram_io.ras,
+            i_Cas_n = ~sdram_io.cas,
+            i_We_n = ~sdram_io.we,
             i_Dqm = sdram_io.dqm)
 
         return m
