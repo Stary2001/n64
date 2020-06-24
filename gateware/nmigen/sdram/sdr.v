@@ -121,11 +121,7 @@ module sdr (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
     // Write Burst Mode
     wire      Write_burst_mode = Mode_reg[9];
 
-`ifndef YOSYS
     wire      Debug            = 1'b1;                          // Debug messages : 1 = On
-`else 
-    wire      Debug            = 1'b0;   
-`endif
     wire      Dq_chk           = Sys_clk & Data_in_enable;      // Check setup/hold time for DQ
     
     assign    Dq               = Dq_reg;                        // DQ buffer
@@ -140,7 +136,6 @@ module sdr (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
     `define   BST       6
     `define   LMR       7
 
-`ifndef YOSYS
     // These timing dynamically adjust based on CAS Latency
     time  tAC, tHZ;
 
@@ -152,7 +147,6 @@ module sdr (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
     time  RAS_chk0, RAS_chk1, RAS_chk2, RAS_chk3;
     time  RCD_chk0, RCD_chk1, RCD_chk2, RCD_chk3;
     time  RP_chk0, RP_chk1, RP_chk2, RP_chk3;
-`endif
 
     initial begin
         Dq_reg = {DQ_BITS{1'bz}};
@@ -167,19 +161,18 @@ module sdr (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
         RCD_chk0 = 0; RCD_chk1 = 0; RCD_chk2 = 0; RCD_chk3 = 0;
         RC_chk0 = 0; RC_chk1 = 0; RC_chk2 = 0; RC_chk3 = 0;
         RP_chk0 = 0; RP_chk1 = 0; RP_chk2 = 0; RP_chk3 = 0;
-
-`ifndef YOSYS
         $timeformat (-9, 1, " ns", 12);
-`endif
     end
 
     // System clock generator
-    always @ (posedge Clk) begin
-        Sys_clk = CkeZ;
-        CkeZ = Cke;
-    end
-    always @ (negedge Clk) begin
-        Sys_clk = 1'b0;
+    always begin
+        @ (posedge Clk) begin
+            Sys_clk = CkeZ;
+            CkeZ = Cke;
+        end
+        @ (negedge Clk) begin
+            Sys_clk = 1'b0;
+        end
     end
 
     // Adjust tAC, tHZ based on CAS Latency
