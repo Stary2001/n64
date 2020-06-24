@@ -5,7 +5,7 @@ from nmigen import *
 from n64_board import *
 from uart import UART
 from ice40_pll import PLL
-from wb import WishboneROM
+from wb import WishboneRAM, WishboneUART, WishboneAddressDecoder, Peripheral
 from cpu import SERV
 from cart import Cart
 from sdram import SDRAMController
@@ -23,14 +23,32 @@ class Top(Elaboratable):
     def elaborate(self, platform):
         m = Module()
         
-        m.submodules += self.cart
-        m.submodules += self.cpu
-        m.submodules += self.sdram
+        m.submodules.cart = self.cart
+        m.submodules.cpu = self.cpu
+        m.submodules.sdram_ctrl = self.sdram
 
-        rom = WishboneROM(init=[0x00000013] * 128)
-        m.submodules += rom
+        with open("irom.bin", "rb") as irom_file:
+            irom_init = list(map(lambda a: a[0], struct.iter_unpack("<I",irom_file.read())))
+
+        irom_init += [0xbeefface] * (128-len(irom_init))
+
+        drom = WishboneRAM(init=[0xbeefface] * 128)
+        wb_uart = WishboneUART(int(self.sys_clk//115200))
+
+        decoder = WishboneAddressDecoder(decodes = [
+            Peripheral(drom, 0, 128 * 4),
+            Peripheral(wb_uart, 0x10000000, 0x8)
+        ], shift=1)
+
+        irom = WishboneRAM(init=irom_init)
         
-        m.d.comb += self.cpu.ibus.connect_to(rom.bus)
+        m.submodules.irom = irom
+        m.submodules.drom = drom
+        m.submodules.wb_uart = wb_uart
+        m.submodules.decoder = decoder
+
+        m.d.comb += self.cpu.ibus.connect_to(irom.bus)
+        m.d.comb += self.cpu.dbus.connect_to(decoder.bus)
         #m.d.comb += rom.bus.connect_to(self.cpu.dbus)
 
         a_counter = Signal(16)
@@ -48,8 +66,8 @@ class Top(Elaboratable):
         m.submodules += buffer_r
         m.submodules += buffer_w
 
-        uart = self.uart
-        m.submodules+=uart
+        m.submodules.uart = uart = self.uart
+
         m.d.sync += uart.tx_rdy.eq(0)
         m.d.sync += buffer_w.en.eq(0)
 
@@ -262,7 +280,7 @@ class CartConcretePLL(CartConcrete):
             pll.clk_pin.eq(clk_pin),
         ]
         cap = super().elaborate(platform)
-        m.submodules += DomainRenamer({'sync': 'pll'})(cap)
+        m.submodules.top = DomainRenamer({'sync': 'pll'})(cap)
         return m
 
 from test import MockN64
@@ -278,7 +296,7 @@ class CartSim(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
-        m.submodules += self.top
+        m.submodules.sim_wrapper = self.top
 
         cart = self.top.cart
         n64 = self.n64
@@ -296,7 +314,7 @@ class CartSim(Elaboratable):
         m.submodules.n64 = n64
 
         sdram_io = self.top.sdram.sdram
-        m.submodules += Instance("sdr_wrapper",
+        m.submodules.sdram_sim = Instance("sdr_wrapper",
             i_dq_in = sdram_io.data_out,
             o_dq_out = sdram_io.data_in,
             i_dq_oe = sdram_io.data_oe,

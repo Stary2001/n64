@@ -28,7 +28,6 @@ class Cart(Elaboratable):
         m.submodules.read_edge = read_edge = EdgeDetector(self.n64.read)
         m.submodules.ale_l_edge = ale_l_edge = EdgeDetector(self.n64.ale_l)
 
-
         # Read from memory whenever address changes.
         with m.If(self.n64.ale_l):
             with m.If(self.n64.ale_h):

@@ -63,6 +63,6 @@ class SERV(Elaboratable):
         input wire [31:0]  i_dbus_rdt,
         input wire         i_dbus_ack"""
 
-        m.submodules += Instance("serv_rf_top", **serv_args)
+        m.submodules.serv = Instance("serv_rf_top", **serv_args)
 
         return m

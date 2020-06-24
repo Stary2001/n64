@@ -21,7 +21,7 @@ module sdr_wrapper(dq_in, dq_out, dq_oe, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n,
     output [DQ_BITS - 1 : 0] dq_out;
     input dq_oe;
 
-    inout [DQ_BITS - 1 : 0] dq;
+    wire [DQ_BITS - 1 : 0] dq;
     
     assign dq = dq_oe ? dq_in : 16'hzzzz; 
     assign dq_out = dq_oe ? 16'hzzzz : dq;
@@ -39,6 +39,7 @@ module tb_top();
 
  top top(rst, clk);
 
+`ifdef IVERILOG
  initial
  begin
     $dumpfile("cart.vcd");
@@ -55,4 +56,5 @@ module tb_top();
 
  always 
     #10 clk = !clk;
+`endif
 endmodule
