@@ -5,6 +5,7 @@
 //`define x16
 //`include "dram/sdr.v"
 
+`ifdef WITH_SDRAM
 module sdr_wrapper(dq_in, dq_out, dq_oe, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
     `include "sdram/sdr_parameters.vh"
 
@@ -30,6 +31,7 @@ module sdr_wrapper(dq_in, dq_out, dq_oe, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n,
 
     sdr real_sdram(dq, Addr, Ba, ~Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
 endmodule
+`endif
 
 module tb_top();
   reg clk;

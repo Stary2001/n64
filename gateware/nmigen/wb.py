@@ -50,29 +50,22 @@ class WishboneRAM(Elaboratable):
 
         stb_delayed = Signal()
 
-        m.d.comb += self.bus.r_dat.eq(0)
+        m.d.comb += wr.addr.eq(self.bus.addr >> 2)
+        m.d.comb += rd.addr.eq(self.bus.addr >> 2)
+        m.d.comb += wr.data.eq(self.bus.w_dat)
+        m.d.comb += self.bus.r_dat.eq(rd.data)
+        
         with m.If(self.bus.cyc):
             with m.If(self.bus.we):
-                m.d.sync += wr.addr.eq(self.bus.addr >> 2)
-                m.d.sync += wr.data.eq(self.bus.w_dat)
                 m.d.sync += wr.en.eq(1)
-            with m.Else():
-                m.d.sync += rd.addr.eq(self.bus.addr >> 2)
-            m.d.sync += stb_delayed.eq(1)
 
-        m.d.sync += self.bus.ack.eq(0)
-        with m.If(stb_delayed):
-            with m.If(~self.bus.we):
-                m.d.comb += self.bus.r_dat.eq(rd.data)
-            m.d.sync += self.bus.ack.eq(1)
-
-        with m.If((self.bus.cyc == 0) & stb_delayed):
-            m.d.sync += stb_delayed.eq(0)
-            m.d.sync += self.bus.ack.eq(0)
-
+        m.d.sync += self.bus.ack.eq(self.bus.cyc & ~self.bus.ack)
         return m
 
 class WishboneUART(Elaboratable):
+    """
+        
+    """
     def __init__(self, divisor):
         self.uart = UART(divisor)
         self.bus = WishboneBus()
@@ -81,20 +74,23 @@ class WishboneUART(Elaboratable):
         m = Module()
         m.submodules.uart = self.uart
 
-        m.d.sync += self.bus.ack.eq(0)
+        m.d.sync += self.uart.tx_rdy.eq(0)
         with m.If(self.bus.cyc):
-
-            addr_mask = 4 - 1
-
+            addr_mask = 8 - 1
             with m.If((self.bus.addr & addr_mask) == 0):
-                m.d.sync += self.bus.ack.eq(1)
+                #m.d.sync += self.bus.ack.eq(1)
                 m.d.sync += self.bus.r_dat.eq(0xdeadface)
             with m.Elif((self.bus.addr & addr_mask) == 4):
-                m.d.sync += self.bus.ack.eq(1)
+                m.d.sync += [
+                    self.uart.tx_data.eq(self.bus.w_dat[0:8]),
+                    self.uart.tx_rdy.eq(1)
+                ]
                 m.d.sync += self.bus.r_dat.eq(0xc0ffee00)
 
-        return m
+        # drop ack on second cycle
+        m.d.sync += self.bus.ack.eq(self.bus.cyc & ~self.bus.ack)
 
+        return m
 
 class Peripheral:
     def __init__(self, dev, start, size):

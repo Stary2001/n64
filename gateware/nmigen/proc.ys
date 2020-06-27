@@ -1,5 +1,5 @@
-read_verilog verilog/cart_tb.v build/cart-sim.v sdram/sdr.v serv/rtl/serv_shift.v serv/rtl/serv_bufreg.v serv/rtl/serv_alu.v serv/rtl/serv_csr.v serv/rtl/serv_ctrl.v serv/rtl/serv_decode.v serv/rtl/serv_mem_if.v serv/rtl/serv_rf_if.v serv/rtl/serv_rf_ram_if.v serv/rtl/serv_rf_ram.v serv/rtl/serv_state.v serv/rtl/serv_top.v serv/rtl/serv_rf_top.v
+read_verilog verilog/cart_tb.v build/cart-sim.v serv/rtl/serv_shift.v serv/rtl/serv_bufreg.v serv/rtl/serv_alu.v serv/rtl/serv_csr.v serv/rtl/serv_ctrl.v serv/rtl/serv_decode.v serv/rtl/serv_mem_if.v serv/rtl/serv_rf_if.v serv/rtl/serv_rf_ram_if.v serv/rtl/serv_rf_ram.v serv/rtl/serv_state.v serv/rtl/serv_top.v serv/rtl/serv_rf_top.v
 
 hierarchy -check -top top
 write_ilang top.sim.ilang
-write_cxxrtl top.sim.cpp
+write_cxxrtl -Og build/cart_tb.cpp

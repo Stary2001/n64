@@ -66,3 +66,38 @@ class SERV(Elaboratable):
         m.submodules.serv = Instance("serv_rf_top", **serv_args)
 
         return m
+
+class PicoRV32(Elaboratable):
+    def __init__(self):
+        #self.timer_irq = Signal()
+        
+        a_width = 32
+        d_width = 32
+
+        self.bus = WishboneBus(d_width, a_width)
+
+    def elaborate(self, platform):
+        m = Module()
+
+        if platform:
+            platform.add_file("picorv32.v", open("picorv32/picorv32.v","r"))
+
+        args = dict(
+            i_wb_clk_i = ClockSignal(),
+            i_wb_rst_i = ResetSignal(),
+            #i_i_timer_irq = self.timer_irq,
+            
+            i_wbm_dat_i = self.bus.r_dat,
+            i_wbm_ack_i = self.bus.ack,
+
+            o_wbm_adr_o = self.bus.addr,
+            o_wbm_dat_o = self.bus.w_dat,
+            o_wbm_cyc_o = self.bus.cyc,
+            o_wbm_stb_o = self.bus.stb,
+            o_wbm_we_o = self.bus.we,
+            o_wbm_sel_o = self.bus.sel
+        )
+
+        m.submodules.picorv32 = Instance("picorv32_wb", **args)
+
+        return m

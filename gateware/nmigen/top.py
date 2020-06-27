@@ -6,50 +6,53 @@ from n64_board import *
 from uart import UART
 from ice40_pll import PLL
 from wb import WishboneRAM, WishboneUART, WishboneAddressDecoder, Peripheral
-from cpu import SERV
+from cpu import SERV, PicoRV32
 from cart import Cart
 from sdram import SDRAMController
 
 class Top(Elaboratable):
-    def __init__(self, sys_clk):
+    def __init__(self, sys_clk, with_sdram):
         self.sys_clk = sys_clk * 1e6
+        self.with_sdram = with_sdram
+
         self.cart = Cart(sys_clk)
         self.cpu = SERV()
         self.sdram = SDRAMController(self.sys_clk)
         self.uart = UART(int(self.sys_clk//115200))
-
         self.buffer = Memory(width=16, depth=256)
+
+        self.wb_uart = WishboneUART(int(self.sys_clk//115200))
 
     def elaborate(self, platform):
         m = Module()
         
         m.submodules.cart = self.cart
         m.submodules.cpu = self.cpu
-        m.submodules.sdram_ctrl = self.sdram
+        
+        if self.with_sdram:
+            m.submodules.sdram_ctrl = self.sdram
 
-        with open("irom.bin", "rb") as irom_file:
+        with open("build/irom.bin", "rb") as irom_file:
             irom_init = list(map(lambda a: a[0], struct.iter_unpack("<I",irom_file.read())))
 
         irom_init += [0xbeefface] * (128-len(irom_init))
-
-        drom = WishboneRAM(init=[0xbeefface] * 128)
-        wb_uart = WishboneUART(int(self.sys_clk//115200))
+        irom = WishboneRAM(init=irom_init)
+        
+        drom_init = [0xbeefface] * (128)
+        drom = WishboneRAM(init=irom_init)
 
         decoder = WishboneAddressDecoder(decodes = [
             Peripheral(drom, 0, 128 * 4),
-            Peripheral(wb_uart, 0x10000000, 0x8)
+            Peripheral(self.wb_uart, 0x10000000, 0x8)
         ], shift=1)
 
-        irom = WishboneRAM(init=irom_init)
-        
         m.submodules.irom = irom
         m.submodules.drom = drom
-        m.submodules.wb_uart = wb_uart
+        m.submodules.wb_uart = self.wb_uart
         m.submodules.decoder = decoder
 
         m.d.comb += self.cpu.ibus.connect_to(irom.bus)
         m.d.comb += self.cpu.dbus.connect_to(decoder.bus)
-        #m.d.comb += rom.bus.connect_to(self.cpu.dbus)
 
         a_counter = Signal(16)
         d_counter = Signal(16)
@@ -71,77 +74,77 @@ class Top(Elaboratable):
         m.d.sync += uart.tx_rdy.eq(0)
         m.d.sync += buffer_w.en.eq(0)
 
-        m.d.sync += self.sdram.data_out.eq(0xff)
+        if self.with_sdram:
+            m.d.sync += self.sdram.data_out.eq(0xff)
 
-        with m.FSM() as fsm:
-            with m.State("wait_sdram"):
-                m.d.sync += self.sdram.cmd.eq(1)
-                with m.If(self.sdram.cmd_ack == 1):
-                    m.d.sync += self.sdram.cmd.eq(0)
-                    m.next = "write"
-            with m.State("write"):
-                with m.If(self.sdram.wr_valid):
-                    m.d.sync += write_happened.eq(1)
-                    
-                    #with m.If(d_counter == 64):
-                    #    m.d.sync += d_counter.eq(0)
-                    #with m.Else():
-                    m.d.sync += d_counter.eq(d_counter+1)
-                    m.d.sync += self.sdram.data_out.eq(d_counter)
-                    #with m.If(write_happened):
-                    #    m.d.sync += a_counter.eq(a_counter+1)
-                with m.Else():
-                    with m.If(write_happened):
-                        m.d.sync += write_happened.eq(0)
+            with m.FSM() as fsm:
+                with m.State("wait_sdram"):
+                    m.d.sync += self.sdram.cmd.eq(1)
+                    with m.If(self.sdram.cmd_ack == 1):
+                        m.d.sync += self.sdram.cmd.eq(0)
+                        m.next = "write"
+                with m.State("write"):
+                    with m.If(self.sdram.wr_valid):
+                        m.d.sync += write_happened.eq(1)
+                        
+                        #with m.If(d_counter == 64):
+                        #    m.d.sync += d_counter.eq(0)
+                        #with m.Else():
+                        m.d.sync += d_counter.eq(d_counter+1)
+                        m.d.sync += self.sdram.data_out.eq(d_counter)
+                        #with m.If(write_happened):
+                        #    m.d.sync += a_counter.eq(a_counter+1)
+                    with m.Else():
+                        with m.If(write_happened):
+                            m.d.sync += write_happened.eq(0)
+                            m.next = "read_req"
+                
+                with m.State("wait"):
+                    counter = Signal(8)
+                    with m.If(counter == 255):
+                        m.d.sync += counter.eq(0)
                         m.next = "read_req"
-            
-            with m.State("wait"):
-                counter = Signal(8)
-                with m.If(counter == 255):
-                    m.d.sync += counter.eq(0)
-                    m.next = "read_req"
-                with m.Else():
-                    m.d.sync += counter.eq(counter+1)
-            with m.State("read_req"):
-                m.d.sync += self.sdram.cmd.eq(3)
-                with m.If(self.sdram.cmd_ack == 3):
-                    m.d.sync += self.sdram.cmd.eq(0)
-                    m.d.sync += a_counter.eq(0)
-                    m.next = "read"
-            with m.State("read"):
-                with m.If(self.sdram.rd_valid):
-                    m.d.sync += read_happened.eq(1)
+                    with m.Else():
+                        m.d.sync += counter.eq(counter+1)
+                with m.State("read_req"):
+                    m.d.sync += self.sdram.cmd.eq(3)
+                    with m.If(self.sdram.cmd_ack == 3):
+                        m.d.sync += self.sdram.cmd.eq(0)
+                        m.d.sync += a_counter.eq(0)
+                        m.next = "read"
+                with m.State("read"):
+                    with m.If(self.sdram.rd_valid):
+                        m.d.sync += read_happened.eq(1)
 
-                    m.d.sync += a_counter.eq(a_counter+1)
-                    m.d.sync += buffer_w.en.eq(1)
-                    m.d.sync += buffer_w.data.eq(self.sdram.data_in)
+                        m.d.sync += a_counter.eq(a_counter+1)
+                        m.d.sync += buffer_w.en.eq(1)
+                        m.d.sync += buffer_w.data.eq(self.sdram.data_in)
 
-                with m.Elif(read_happened):
-                    m.d.sync += read_happened.eq(0)
-                    m.d.sync += a_counter.eq(0)
-                    m.next = "readout"
-            with m.State("readout"):
-                with m.If(a_counter < 0x100):
-                    m.d.sync += [
-                        uart.tx_data.eq(buffer_r.data[0:8]),
-                        uart.tx_rdy.eq(1),
-                        a_counter.eq(a_counter+1)
-                    ]
-                    m.next = "wait_uart"
-                with m.Else():
-                    m.next = "done"
-            with m.State("wait_uart"):
-                with m.If(uart.tx_ack):
-                    m.next = "wait_char_delay"
-            with m.State("wait_char_delay"):
-                timer = Signal(16)
-                m.d.sync += timer.eq(timer+1)
-                with m.If(timer > 10000):
-                    m.d.sync += timer.eq(0)
-                    m.next = "readout"
-            with m.State("done"):
-                pass
-
+                    with m.Elif(read_happened):
+                        m.d.sync += read_happened.eq(0)
+                        m.d.sync += a_counter.eq(0)
+                        m.next = "readout"
+                with m.State("readout"):
+                    with m.If(a_counter < 0x100):
+                        m.d.sync += [
+                            uart.tx_data.eq(buffer_r.data[0:8]),
+                            uart.tx_rdy.eq(1),
+                            a_counter.eq(a_counter+1)
+                        ]
+                        m.next = "wait_uart"
+                    with m.Else():
+                        m.next = "done"
+                with m.State("wait_uart"):
+                    with m.If(uart.tx_ack):
+                        m.next = "wait_char_delay"
+                with m.State("wait_char_delay"):
+                    timer = Signal(16)
+                    m.d.sync += timer.eq(timer+1)
+                    with m.If(timer > 10000):
+                        m.d.sync += timer.eq(0)
+                        m.next = "readout"
+                with m.State("done"):
+                    pass
         return m
 
     def ports(self):
@@ -177,17 +180,10 @@ class CartConcrete(Elaboratable):
         uart_tx = platform.request("io",6)
         uart_rx = platform.request("io",7)
 
-
-        a = platform.request("io",8, dir="o")
-        b = platform.request("io",9, dir="o")
-        c = platform.request("io",10, dir="o")
-        d = platform.request("io",11, dir="o")
-        e = platform.request("io",12, dir="o")
-        f = platform.request("io",13, dir="o")
-        g = platform.request("io",14, dir="o")
-        h = platform.request("io",15, dir="o")
-
-        top = Top(self.sys_clk)
+        cpu_uart_tx = platform.request("io",8)
+        cpu_uart_rx = platform.request("io",9)
+        
+        top = Top(self.sys_clk, with_sdram=True)
         cart = top.cart
 
         m.d.comb += [
@@ -195,6 +191,13 @@ class CartConcrete(Elaboratable):
             uart_rx.oe.eq(0),
             uart_tx.o.eq(top.uart.tx_o),
             top.uart.rx_i.eq(uart_rx.i)
+        ]
+
+        m.d.comb += [
+            cpu_uart_tx.oe.eq(1),
+            cpu_uart_rx.oe.eq(0),
+            cpu_uart_tx.o.eq(top.wb_uart.uart.tx_o),
+            top.wb_uart.uart.rx_i.eq(cpu_uart_rx.i)
         ]
 
         clk = ClockSignal("sync")
@@ -256,9 +259,6 @@ class CartConcrete(Elaboratable):
 
             sdram.dq.i_clk.eq(clk),
             sdram.dq.o_clk.eq(clk),
-
-            Cat(a,b,c,d,e,f,g).eq(sdram_ctrl.data_in[0:7]),
-            h.eq(sdram_ctrl.data_oe)
         ]
 
         m.submodules.top = top
@@ -288,6 +288,8 @@ class CartSim(Elaboratable):
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
+        kwargs["with_sdram"] = False
+
         self.uart_tx = Signal()
         self.uart_rx = Signal()
 
@@ -313,20 +315,21 @@ class CartSim(Elaboratable):
         ]
         m.submodules.n64 = n64
 
-        sdram_io = self.top.sdram.sdram
-        m.submodules.sdram_sim = Instance("sdr_wrapper",
-            i_dq_in = sdram_io.data_out,
-            o_dq_out = sdram_io.data_in,
-            i_dq_oe = sdram_io.data_oe,
-            i_Addr = sdram_io.addr,
-            i_Ba = sdram_io.ba,
-            i_Clk = ClockSignal(),
-            i_Cke = sdram_io.cke,
-            i_Cs_n = ~sdram_io.cs,
-            i_Ras_n = ~sdram_io.ras,
-            i_Cas_n = ~sdram_io.cas,
-            i_We_n = ~sdram_io.we,
-            i_Dqm = sdram_io.dqm)
+        if self.top.with_sdram:
+            sdram_io = self.top.sdram.sdram
+            m.submodules.sdram_sim = Instance("sdr_wrapper",
+                i_dq_in = sdram_io.data_out,
+                o_dq_out = sdram_io.data_in,
+                i_dq_oe = sdram_io.data_oe,
+                i_Addr = sdram_io.addr,
+                i_Ba = sdram_io.ba,
+                i_Clk = ClockSignal(),
+                i_Cke = sdram_io.cke,
+                i_Cs_n = ~sdram_io.cs,
+                i_Ras_n = ~sdram_io.ras,
+                i_Cas_n = ~sdram_io.cas,
+                i_We_n = ~sdram_io.we,
+                i_Dqm = sdram_io.dqm)
 
         return m
 
