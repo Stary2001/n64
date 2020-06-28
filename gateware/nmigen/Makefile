@@ -7,17 +7,17 @@ V_FILES = verilog/cart_tb.v build/cart-sim.v sdram/sdr.v $(SERV_V_FILES) $(PICOR
 PY_FILES = cart.py cpu.py ice40_pll.py misc.py n64_board.py sdram.py test.py top.py uart.py wb.py
 IVERILOG_FLAGS = -DWITH_SDRAM -DIVERILOG -Isdram -Iserv/rtl -Dden512Mb -Dsg67 -Dx16
 
-build/cart-sim.v: $(PY_FILES) build/irom.bin
+build/cart-sim.v: $(PY_FILES) irom/irom.bin
 	python top.py generate-top-sim > build/cart-sim.v
 
 build/cart_tb: $(V_FILES)
 	iverilog -o $@ $(IVERILOG_FLAGS) $^
 
-build/cart_tb_cxxrtl: build/cart_tb.cpp main.cpp
-	g++ -I`yosys-config --datdir`/include -DTOP=\"build/cart_tb.cpp\" -o $@ main.cpp
+build/cart_tb_cxxrtl: build/cart_tb.cpp cxxrtl/main.cpp
+	g++ -I`yosys-config --datdir`/include -DTOP=\"../build/cart_tb.cpp\" -o $@ cxxrtl/main.cpp
 
 build/cart_tb.cpp: $(V_FILES)
-	$(YOSYS) proc.ys
+	$(YOSYS) cxxrtl/proc.ys
 
 cart.vcd: build/cart_tb
 	./build/cart_tb
@@ -25,14 +25,8 @@ cart.vcd: build/cart_tb
 cart_cxxrtl.vcd: build/cart_tb_cxxrtl
 	./build/cart_tb_cxxrtl cart_cxxrtl.vcd 2
 
-build/irom.o: irom.s
-	riscv64-unknown-elf-as -march=rv32i $< -o $@
-
-build/irom.elf: build/irom.o
-	riscv64-unknown-elf-ld -melf32lriscv $< -o $@
-
-build/irom.bin: build/irom.elf
-	riscv64-unknown-elf-objcopy -O binary $< $@
+irom/irom.bin: irom/irom.s irom/main.c
+	make -C irom irom.bin
 
 .PHONY: cart.vcd
 all: cart.vcd

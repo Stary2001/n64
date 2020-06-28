@@ -62,7 +62,7 @@ int main(int argc, char **argv)
         }
     }
 
-    for(int i=20;i<10000;++i){
+    for(int i=20;i<100000;++i){
         top.p_clk = value<1>{0u};
         top.step();
 

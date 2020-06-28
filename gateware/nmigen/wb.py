@@ -50,21 +50,20 @@ class WishboneRAM(Elaboratable):
 
         stb_delayed = Signal()
 
+        m.d.sync += wr.en.eq(0)
+
         m.d.comb += wr.addr.eq(self.bus.addr >> 2)
         m.d.comb += rd.addr.eq(self.bus.addr >> 2)
         m.d.comb += wr.data.eq(self.bus.w_dat)
         m.d.comb += self.bus.r_dat.eq(rd.data)
-        
-        with m.If(self.bus.cyc):
-            with m.If(self.bus.we):
-                m.d.sync += wr.en.eq(1)
 
         m.d.sync += self.bus.ack.eq(self.bus.cyc & ~self.bus.ack)
+        m.d.sync += wr.en.eq((self.bus.cyc & self.bus.we) & ~wr.en)
         return m
 
 class WishboneUART(Elaboratable):
     """
-        
+        TODO add a small fifo?
     """
     def __init__(self, divisor):
         self.uart = UART(divisor)
@@ -75,17 +74,23 @@ class WishboneUART(Elaboratable):
         m.submodules.uart = self.uart
 
         m.d.sync += self.uart.tx_rdy.eq(0)
+        m.d.sync += self.uart.rx_ack.eq(0)
+
         with m.If(self.bus.cyc):
             addr_mask = 8 - 1
             with m.If((self.bus.addr & addr_mask) == 0):
-                #m.d.sync += self.bus.ack.eq(1)
-                m.d.sync += self.bus.r_dat.eq(0xdeadface)
+                m.d.sync += self.bus.r_dat.eq(Cat(self.uart.tx_ack, self.uart.rx_rdy, self.uart.rx_err))
             with m.Elif((self.bus.addr & addr_mask) == 4):
-                m.d.sync += [
-                    self.uart.tx_data.eq(self.bus.w_dat[0:8]),
-                    self.uart.tx_rdy.eq(1)
-                ]
-                m.d.sync += self.bus.r_dat.eq(0xc0ffee00)
+                with m.If(self.bus.we): # write
+                    m.d.sync += [
+                        self.uart.tx_data.eq(self.bus.w_dat[0:8]),
+                        self.uart.tx_rdy.eq(1)
+                    ]
+                with m.Else():
+                    m.d.sync += [
+                        self.bus.r_dat.eq(self.uart.rx_data),
+                        self.uart.rx_ack.eq(1)
+                    ]
 
         # drop ack on second cycle
         m.d.sync += self.bus.ack.eq(self.bus.cyc & ~self.bus.ack)
@@ -102,10 +107,9 @@ class Peripheral:
 
 
 class WishboneAddressDecoder(Elaboratable):
-    def __init__(self, decodes, shift):
+    def __init__(self, decodes):
         self.decodes = decodes
         self.bus = WishboneBus()
-        self.shift = shift
 
     def elaborate(self, platform):
         m = Module()

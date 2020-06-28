@@ -18,7 +18,7 @@ class Top(Elaboratable):
         self.cart = Cart(sys_clk)
         self.cpu = SERV()
         self.sdram = SDRAMController(self.sys_clk)
-        self.uart = UART(int(self.sys_clk//115200))
+        #self.uart = UART(int(self.sys_clk//115200))
         self.buffer = Memory(width=16, depth=256)
 
         self.wb_uart = WishboneUART(int(self.sys_clk//115200))
@@ -32,19 +32,19 @@ class Top(Elaboratable):
         if self.with_sdram:
             m.submodules.sdram_ctrl = self.sdram
 
-        with open("build/irom.bin", "rb") as irom_file:
+        with open("irom/irom.bin", "rb") as irom_file:
             irom_init = list(map(lambda a: a[0], struct.iter_unpack("<I",irom_file.read())))
 
-        irom_init += [0xbeefface] * (128-len(irom_init))
+        irom_init += [0xbeeffac0] * (128-len(irom_init))
         irom = WishboneRAM(init=irom_init)
         
-        drom_init = [0xbeefface] * (128)
+        drom_init = [0xbeeffac0] * (128)
         drom = WishboneRAM(init=irom_init)
 
         decoder = WishboneAddressDecoder(decodes = [
             Peripheral(drom, 0, 128 * 4),
             Peripheral(self.wb_uart, 0x10000000, 0x8)
-        ], shift=1)
+        ])
 
         m.submodules.irom = irom
         m.submodules.drom = drom
@@ -69,8 +69,8 @@ class Top(Elaboratable):
         m.submodules += buffer_r
         m.submodules += buffer_w
 
-        m.submodules.uart = uart = self.uart
-
+        #m.submodules.uart = uart = self.uart
+        """
         m.d.sync += uart.tx_rdy.eq(0)
         m.d.sync += buffer_w.en.eq(0)
 
@@ -146,6 +146,8 @@ class Top(Elaboratable):
                 with m.State("done"):
                     pass
         return m
+        """
+        return m
 
     def ports(self):
         return self.cart.ports()
@@ -180,24 +182,14 @@ class CartConcrete(Elaboratable):
         uart_tx = platform.request("io",6)
         uart_rx = platform.request("io",7)
 
-        cpu_uart_tx = platform.request("io",8)
-        cpu_uart_rx = platform.request("io",9)
-        
         top = Top(self.sys_clk, with_sdram=True)
         cart = top.cart
 
         m.d.comb += [
             uart_tx.oe.eq(1),
             uart_rx.oe.eq(0),
-            uart_tx.o.eq(top.uart.tx_o),
-            top.uart.rx_i.eq(uart_rx.i)
-        ]
-
-        m.d.comb += [
-            cpu_uart_tx.oe.eq(1),
-            cpu_uart_rx.oe.eq(0),
-            cpu_uart_tx.o.eq(top.wb_uart.uart.tx_o),
-            top.wb_uart.uart.rx_i.eq(cpu_uart_rx.i)
+            uart_tx.o.eq(top.wb_uart.uart.tx_o),
+            top.wb_uart.uart.rx_i.eq(uart_rx.i)
         ]
 
         clk = ClockSignal("sync")
@@ -342,12 +334,12 @@ if __name__ == "__main__":
         if sys.argv[1] == "generate-top":
             from nmigen.back import rtlil, verilog
 
-            top = Top(sys_clk=50)
+            top = Top(sys_clk=0.5)
             print(verilog.convert(top, ports=top.ports(), name="top"))
         if sys.argv[1] == "generate-top-sim":
             from nmigen.back import rtlil, verilog
 
-            top = CartSim(sys_clk=50)
+            top = CartSim(sys_clk=0.5)
             print(verilog.convert(top, ports=top.ports(), name="top"))
         elif sys.argv[1] == "sim":
             cart = CartSim(sys_clk=50)
@@ -371,4 +363,5 @@ if __name__ == "__main__":
                 sim.run()
     else:
         platform = N64Platform()
-        platform.build(CartConcretePLL(sys_clk = 50, uart_baud = 115200, uart_delay = 10000), do_program=True)
+        concrete = CartConcretePLL(sys_clk = 50, uart_baud = 115200, uart_delay = 10000)
+        platform.build(concrete, read_verilog_opts="-I../serv/rtl", do_program=True)
