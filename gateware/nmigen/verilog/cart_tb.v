@@ -38,8 +38,9 @@ module tb_top();
   reg rst;
 
 // module sdr (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
+ wire [3:0] dq;
 
- top top(rst, clk);
+ top top(clk, rst, dq);
 
 `ifdef IVERILOG
  initial

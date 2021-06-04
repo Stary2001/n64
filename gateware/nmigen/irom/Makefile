@@ -1,7 +1,7 @@
 O_FILES = irom.o main.o
 
 %.o: %.c
-	riscv64-unknown-elf-gcc -c -march=rv32i -mabi=ilp32 -nostdlib -nostartfiles $< -o $@
+	riscv64-unknown-elf-gcc -O2 -c -march=rv32i -mabi=ilp32 -nostdlib -nostartfiles $< -o $@
 
 %.o: %.s
 	riscv64-unknown-elf-gcc -c -march=rv32i -mabi=ilp32 -nostdlib -nostartfiles $< -o $@

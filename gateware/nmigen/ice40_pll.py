@@ -48,7 +48,7 @@ class PLL(Elaboratable):
         # cribbed from Icestorm's icepll.
         f_in, f_req = self.freq_in, self.freq_out
         assert 10 <= f_in <= 25
-        assert 16 <= f_req <= 275
+        #assert 16 <= f_req <= 275
         coefficients = namedtuple('coefficients', 'divr divf divq')
         divf_range = 128        # see comments in icepll.cc
         best_fout = float('inf')

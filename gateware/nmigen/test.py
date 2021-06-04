@@ -95,7 +95,14 @@ class MockN64(Elaboratable):
                     counter.eq(0)
                 ]
 
-                m.next = "wait"
+                m.next = "wait_for_init"
+
+            with m.State("wait_for_init"):
+                with m.If(counter == 6000):
+                    m.d.sync += counter.eq(0)
+                    m.next = "wait"
+                with m.Else():
+                    m.d.sync += counter.eq(counter+1)
 
             with m.State("wait"):
                 with m.If(counter == delays[state]):

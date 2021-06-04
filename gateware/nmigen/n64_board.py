@@ -50,10 +50,7 @@ class N64Platform(LatticeICE40Platform):
             Clock(25e6), Attrs(GLOBAL=True, IO_STANDARD="SB_LVCMOS")
         ),
 
-        Resource("sck", 0, Pins("67", dir="o")),
-        Resource("do", 0, Pins("68", dir="o")),
-        Resource("di", 0, Pins("70", dir="o")),
-        Resource("cs", 0, Pins("71", dir="o")),
+        *SPIFlashResources(0, clk="70", cipo="68", copi="67", cs_n="71", wp_n="62", hold_n="61"),
 
         #Resource("extra_io", 0, Pins("37 38 39 41 42 43 44 45", dir="io")),
         Resource("io", 0, Pins("37", dir="io")),
@@ -85,10 +82,10 @@ class N64Platform(LatticeICE40Platform):
         SDRAMResource(0,
             clk = "113",
             cke = "112",
-            cs = "110",
-            we = "116",
-            ras = "114",
-            cas = "115",
+            cs_n = "110",
+            we_n = "116",
+            ras_n = "114",
+            cas_n = "115",
 
             ba = "90 91",
             a = "93 94 95 96 97 98 99 101 102 104 105 106 107",
