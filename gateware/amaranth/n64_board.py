@@ -1,9 +1,9 @@
 import os
 import subprocess
 
-from nmigen.build import *
-from nmigen.vendor.lattice_ice40 import *
-from nmigen_boards.resources import *
+from amaranth.build import *
+from amaranth.vendor import LatticeICE40Platform
+from amaranth_boards.resources import *
 import tempfile
 
 __all__ = ["N64Platform"]
@@ -53,14 +53,14 @@ class N64Platform(LatticeICE40Platform):
         *SPIFlashResources(0, clk="70", cipo="68", copi="67", cs_n="71", wp_n="62", hold_n="61"),
 
         #Resource("extra_io", 0, Pins("37 38 39 41 42 43 44 45", dir="io")),
-        Resource("io", 0, Pins("37", dir="io")),
+        Resource("io", 0, Pins("37", dir="io")), # pin 2
         Resource("io", 1, Pins("38", dir="io")),
         Resource("io", 2, Pins("39", dir="io")),
         Resource("io", 3, Pins("41", dir="io")),
-        Resource("io", 4, Pins("42", dir="io")),
-        Resource("io", 5, Pins("43", dir="io")),
-        Resource("io", 6, Pins("44", dir="io")),
-        Resource("io", 7, Pins("45", dir="io")),
+        Resource("io", 4, Pins("42", dir="io")), # pin 6
+        Resource("io", 5, Pins("43", dir="io")), # pin 7
+        Resource("io", 6, Pins("44", dir="io")), # pin 8
+        Resource("io", 7, Pins("45", dir="io")), # pin 9
 
         Resource("io", 15, Pins("73", dir="io")),
         Resource("io", 14, Pins("75", dir="io")),
@@ -77,6 +77,8 @@ class N64Platform(LatticeICE40Platform):
             Subsignal("write", Pins("16", dir="i")),
             Subsignal("ale_l", Pins("15", dir="i")),
             Subsignal("ale_h", Pins("11", dir="i")),
+            Subsignal("cold_reset", Pins("83", dir="i")),
+            Subsignal("nmi", PinsN("81", dir="i")),
         ),
 
         SDRAMResource(0,
@@ -102,7 +104,9 @@ class N64Platform(LatticeICE40Platform):
     def toolchain_program(self, products, name):
         iceprog = os.environ.get("ICEPROG", "iceprog")
         with products.extract("{}.bin".format(name)) as bitstream_filename:
-            subprocess.check_call([iceprog, bitstream_filename])
+            subprocess.check_call(f"glasgow run program-ice40-flash -V 3.3 -f 100 --cs A0 --sck A1 --io A2,A3,A6,A7 --done A4 --reset A5 erase-program -P 64 -S 4096 -f {bitstream_filename} 0", shell=True)
+            subprocess.check_call(f"glasgow run program-ice40-flash -V 3.3 -f 100 --cs A0 --sck A1 --io A2,A3,A6,A7 --done A4 --reset A5 erase-program -P 64 -S 4096 -f {bitstream_filename} 0", shell=True)
+            subprocess.check_call(f"glasgow voltage A 0", shell=True)
 
 if __name__ == "__main__":
     from .test.blinky import *

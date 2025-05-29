@@ -1,4 +1,5 @@
-from nmigen import *
+from amaranth import *
+from amaranth.hdl import IOPort
 from uart import UART
 
 class MemoryInterface(Record):
@@ -169,23 +170,17 @@ class WishboneUART(Elaboratable):
 class WishboneGPIO(Elaboratable):
     def __init__(self):
         self.bus = WishboneBus()
-        #self.io = Array(8)
+        self.io = Signal(32)
 
     def elaborate(self, platform):
         m = Module()
 
-        """backing = Memory(width=32, depth=len(self.init), init=self.init)
-        m.submodules.rd = rd = backing.read_port()
-        m.submodules.wr = wr = backing.write_port(granularity=8)
+        with m.If(self.bus.cyc):
+            m.d.sync += self.io.eq(self.bus.w_dat)
 
-        stb_delayed = Signal()
+        m.d.comb += self.bus.r_dat.eq(self.io)
 
-        m.d.comb += wr.addr.eq(self.bus.addr >> 2)
-        m.d.comb += rd.addr.eq(self.bus.addr >> 2)
-        m.d.comb += wr.data.eq(self.bus.w_dat)
-        m.d.comb += self.bus.r_dat.eq(rd.data)
-
-        m.d.sync += self.bus.ack.eq(self.bus.cyc & ~self.bus.ack)"""
+        m.d.sync += self.bus.ack.eq(self.bus.cyc & ~self.bus.ack)
 
         return m
 
@@ -232,40 +227,37 @@ class WishboneSPIFlash(Elaboratable):
 
         if platform:
             flash = platform.request("spi_flash_4x", dir={"cs": "-", "clk": "-", "dq": "-"})
+    
+            platform.add_file("qpi_memctrl.v", open("external/no2qpimem/rtl/qpi_memctrl.v", "r"))
+            platform.add_file("qpi_phy_ice40_1x.v", open("external/no2qpimem/rtl/qpi_phy_ice40_1x.v", "r"))
+            platform.add_file("fifo_sync_shift.v", open("external/no2misc/rtl/fifo_sync_shift.v", "r"))
+            platform.add_file("delay.v", open("external/no2misc/rtl/delay.v", "r"))
 
-            platform.add_file("qspi_master.v", open("ice40-playground/cores/qspi_master/rtl/qspi_master.v", "r"))
-            platform.add_file("qspi_phy_ice40_1x.v", open("ice40-playground/cores/qspi_master/rtl/qspi_phy_ice40_1x.v", "r"))
-            platform.add_file("misc.v", open("ice40-playground/cores/misc/rtl/fifo_sync_shift.v", "r"))
-            platform.add_file("delay.v", open("ice40-playground/cores/misc/rtl/delay.v", "r"))
-
-            pad_cs = flash.cs
-            pad_clk = flash.clk
-            pad_dq = flash.dq
+            pad_cs = flash.cs._io
+            pad_clk = flash.clk._io
+            pad_dq = flash.dq._io
         else:
             pad_cs = Signal()
             pad_clk = Signal()
-            pad_dq = Signal(4)
+            pad_dq = IOPort(4, name="qspi_dq")
 
-            m.submodules.spiflash = Instance("spiflash",
-                i_csb = pad_cs,
-                i_clk = pad_clk,
-                io_io0 = pad_dq[0],
-                io_io1 = pad_dq[1],
-                io_io2 = pad_dq[2],
-                io_io3 = pad_dq[3]
-            )
+            #m.submodules.spiflash = Instance("spiflash",
+            #    i_csb = pad_cs,
+            #    i_clk = pad_clk,
+            #    io_io0 = pad_dq[0],
+            #    io_io1 = pad_dq[1],
+            #    io_io2 = pad_dq[2],
+            #    io_io3 = pad_dq[3]
+            #)
 
-        cs_n = Signal()
-        m.d.comb += pad_cs.eq(cs_n)
-
-        m.submodules.phy = Instance("qspi_phy_ice40_1x",
+        m.submodules.phy = Instance("qpi_phy_ice40_1x",
             p_N_CS = 1,
             p_WITH_CLK = 1,
             p_NEG_IN = 0,
 
             io_pad_io = pad_dq,
             o_pad_clk = pad_clk,
-            o_pad_cs_n = cs_n,
+            o_pad_cs_n = pad_cs,
 
             o_phy_io_i = phy_io_i,
             i_phy_io_o = phy_io_o,
@@ -280,11 +272,12 @@ class WishboneSPIFlash(Elaboratable):
 
         m.d.comb += mi.cs.eq(0)
 
-        m.submodules.qspi = Instance("qspi_master",
+        m.submodules.qspi = Instance("qpi_memctrl",
             p_N_CS = 1,
             p_CMD_READ = 0xEB,
             p_CMD_WRITE = 0x02,
-            p_DUMMY_CLK = 8,
+            p_DUMMY_CLK = 10, # ???? 8 should be enough
+            p_PAUSE_CLK = 3,
             p_PHY_DELAY = 2,
 
             i_phy_io_i = phy_io_i,

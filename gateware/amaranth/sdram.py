@@ -1,5 +1,5 @@
-from nmigen import *
-from nmigen.lib.scheduler import RoundRobin
+from amaranth import *
+from scheduler import RoundRobin
 import math
 
 class SDRAMArbiter(Elaboratable):

@@ -1,11 +1,11 @@
 import os
 import struct
 
-from nmigen import *
+from amaranth import *
 from misc import EdgeDetector
 
 class Cart(Elaboratable):
-    def __init__(self, sys_clk, sdram_port):
+    def __init__(self, sys_clk, sdram_port, trace):
         self.n64 = Record([
             ("ad_i", 16),
             ("ad_o", 16),
@@ -19,16 +19,14 @@ class Cart(Elaboratable):
         self.sdram_port = sdram_port
         self.sys_clk = sys_clk * 1e6
 
-        """self.trace_depth = trace.depth
+        self.trace_depth = trace.depth
 
         self.my_trace_addr = Signal(range(self.trace_depth))
         self.trace_addr = trace.addr
         self.trace_data = trace.data
-        self.trace_en = trace.en"""
+        self.trace_en = trace.en
 
         self.buffer = Memory(depth=256, width=16)
-
-        self.fug = Signal()
 
     def elaborate(self, platform):
         m = Module()
@@ -43,6 +41,8 @@ class Cart(Elaboratable):
         m.submodules.buffer_rd = buffer_rd = self.buffer.read_port()
         m.submodules.buffer_wr = buffer_wr = self.buffer.write_port()
 
+        m.d.sync += self.trace_en.eq(0)
+
         curr_block_start = Signal(32)
         do_sdram_read = Signal()
 
@@ -53,7 +53,6 @@ class Cart(Elaboratable):
             with m.Else():
                 m.d.sync += addr[0:16].eq(self.n64.ad_i)
 
-
         edge_counter = Signal(32)
 
         with m.If(ale_l_edge.fall):
@@ -63,7 +62,6 @@ class Cart(Elaboratable):
                     curr_block_start.eq(addr),
                     do_sdram_read.eq(1)
                 ]
-
             m.d.sync += edge_counter.eq(edge_counter+1)
 
         with m.If(do_sdram_read):
@@ -94,11 +92,17 @@ class Cart(Elaboratable):
                     m.next = "wait_ack"
 
         m.d.comb += buffer_rd.addr.eq(addr&0xff)
-        
-        #m.d.sync += self.trace_en.eq(0)
+
         with m.If(read_edge.fall):
             m.d.sync += self.n64.ad_oe.eq(1)
             m.d.comb += self.n64.ad_o.eq(buffer_rd.data)
+
+            with m.If(self.trace_addr < (self.trace_depth-1)):
+                m.d.sync += self.trace_en.eq(1)
+                m.d.sync += self.trace_data.eq(Cat(addr, buffer_rd.data, Const(0, unsigned(16))))
+                m.d.sync += self.trace_addr.eq(self.my_trace_addr)
+                m.d.sync += self.my_trace_addr.eq(self.my_trace_addr+1)
+
             m.d.sync += addr.eq(addr+2)
         with m.Else():
             m.d.sync += self.n64.ad_oe.eq(0)

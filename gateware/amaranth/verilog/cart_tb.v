@@ -7,7 +7,7 @@
 
 `ifdef WITH_SDRAM
 module sdr_wrapper(dq_in, dq_out, dq_oe, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
-    `include "sdram/sdr_parameters.vh"
+    `include "external/sdram-model/sdr_parameters.vh"
 
     input                         Clk;
     input                         Cke;
@@ -40,7 +40,7 @@ module tb_top();
 // module sdr (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
  wire [3:0] dq;
 
- top top(clk, rst, dq);
+ top top(rst, qspi_dq, clk);
 
 `ifdef IVERILOG
  initial

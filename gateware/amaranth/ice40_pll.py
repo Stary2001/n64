@@ -3,9 +3,9 @@
 from collections import namedtuple
 import warnings
 
-from nmigen import *
-from nmigen.lib.cdc import ResetSynchronizer
-from nmigen.cli import main
+from amaranth import *
+from amaranth.lib.cdc import ResetSynchronizer
+from amaranth.cli import main
 
 
 class PLL(Elaboratable):

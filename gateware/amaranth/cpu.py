@@ -1,4 +1,4 @@
-from nmigen import *
+from amaranth import *
 import os
 from wb import WishboneBus
 
@@ -16,9 +16,9 @@ class SERV(Elaboratable):
         m = Module()
 
         if platform:
-            for file in os.listdir("serv/rtl/"):
+            for file in os.listdir("external/serv/rtl/"):
                 if file.endswith(".v"):
-                  platform.add_file(file, open("serv/rtl/"+file,"r"))
+                  platform.add_file(file, open("external/serv/rtl/"+file,"r"))
 
 
         serv_args = dict(
@@ -81,7 +81,7 @@ class PicoRV32(Elaboratable):
         m = Module()
 
         if platform:
-            platform.add_file("picorv32.v", open("picorv32/picorv32.v","r"))
+            platform.add_file("picorv32.v", open("external/picorv32/picorv32.v","r"))
 
         args = dict(
             i_wb_clk_i = ClockSignal(),

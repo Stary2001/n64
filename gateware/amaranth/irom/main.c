@@ -5,8 +5,6 @@
 extern void uart_print_char(char c);
 extern void uart_print_string(const char *c);
 
-const char *str = "Hello from C!\r\n";
-
 char uart_read() {
 	volatile uint32_t *uart_base = (volatile uint32_t*) 0x10000000;
 	while(!((*uart_base)&2));
@@ -99,41 +97,90 @@ void spi_xfer(uint8_t *tx_data, size_t tx_len, size_t dummy_len, uint8_t *rx_dat
 	flash_end();
 }*/
 
+bool printed = false;
+
 int main() {
 	uint32_t start_time = read_timer();
 
-	volatile uint32_t *uart_base = (volatile uint32_t*) 0x10000000;
-	uart_print_string(str);
+	volatile uint32_t *uart_base =  (volatile uint32_t*) 0x10000000;
+	volatile uint32_t *flash_trace_base = (volatile uint32_t*) 0x30000000;
+	volatile uint32_t *cart_trace_base = (volatile uint32_t*) 0x60000000;
+	
+	volatile uint32_t *trace_base = cart_trace_base;
+
+	uart_print_string("hello from fw " __DATE__ " " __TIME__ "\r\n");
+	uart_print_string("d: dump trace\r\n");
+	uart_print_string("f: select flash tracer\r\n");
+	uart_print_string("c: select cart tracer\r\n");
+
 	while(true) {
-		/*char c = uart_read();
+		char c = uart_read();
 		if(c == '\r') {
 			uart_print_char('\r');
 			uart_print_char('\n');
 		}
 		else {
 			uart_print_char(c);
+			uart_print_string("\r\n");
+		}
+		
+		if(c == 'c') {
+			trace_base = cart_trace_base;
+		}
+
+		if(c == 'f') {
+			trace_base = flash_trace_base;
+		}
+
+		if(c == 'd') {
+			if(trace_base == flash_trace_base) {
+				for(int i= 0 ;i<128; i++) {
+					uart_print_string("Trace: ");
+					uint32_t flash_addr = *(trace_base + (i*2));
+					uart_print_string(my_itoa(flash_addr >> 8));
+					uart_print_string(" = ");
+					uint32_t flash_value = *(trace_base + (i*2) + 1);
+					uart_print_string(my_itoa(flash_value));
+					//uart_print_string(" after ");
+					//uart_print_string(my_itoa(end_time-start_time));
+					uart_print_string("\r\n");
+				}
+			} else {
+				for(int i= 0 ;i<256; i++) {
+					uart_print_string("Trace: ");
+					uint32_t cart_addr = *(trace_base + (i*2));
+					uart_print_string(my_itoa(cart_addr));
+					uart_print_string(" = ");
+					uint32_t flash_value = *(trace_base + (i*2) + 1);
+					uart_print_string(my_itoa(flash_value));
+					//uart_print_string(" after ");
+					//uart_print_string(my_itoa(end_time-start_time));
+					uart_print_string("\r\n");
+				}
+			}
 		}
 
 		if((*uart_base) & 4) {
-			uart_print_string("err\n");
-		}*/
+			uart_print_string("err\r\n");
+		}
 
-
-		if(*((volatile uint32_t*)0x30000000) != 0) {
+		/*if(*((volatile uint32_t*)0x30000000) != 0) {
 			uint32_t end_time = read_timer();
 
-			for(int i= 0 ;i<256; i++) {
+			for(int i= 0 ;i<128; i++) {
+				volatile uint32_t *ptr = ((volatile uint32_t*)0x30000000) + i*2;
 				uart_print_string("Trace: ");
-				uart_print_string(my_itoa(*(((volatile uint32_t*)0x30000000)+i)));
+				uart_print_string(my_itoa(*ptr));
+				uart_print_string(my_itoa(*(ptr+1)));
 				uart_print_string(" after ");
 				uart_print_string(my_itoa(end_time-start_time));
 				uart_print_string("\r\n");
 			}
 
-			break;
-		} else {
-			//uart_print_string("alive\r\n");
-		}
+			//break;
+		} else {*/
+			uart_print_string("alive\r\n");
+		//}
 
 		//-for(int i =0;i<1000000;i++);
 	}

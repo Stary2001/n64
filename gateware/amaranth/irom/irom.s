@@ -6,10 +6,10 @@
 _start:
 li sp, 0x800
 
+jal spi_init
+
 la a0, hello
 jal uart_print_string 
-
-jal spi_init
 
 jal main
 la a0, goodbye
@@ -54,6 +54,7 @@ sb a0, 4(a1)
 
 jr ra
 
+.equ    IO_BASE, 0x50000000
 .equ    SPI_BASE, 0x20000000
 .equ    SPI_CSR,  4 * 0x00
 .equ	SPI_RF,   4 * 0x03
@@ -124,6 +125,12 @@ spi_init:
 	# Release external control
 	#li	t0, 0x00000004
 	#sw	t0, SPI_CSR(t5)
+
+	# Write 1 to IO 0 to signal the copy block to run
+	li	t5, IO_BASE
+
+	li t0, 1
+	sw t0, 0(t5)
 
 	# Return
 	# ------

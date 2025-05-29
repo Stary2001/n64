@@ -1,4 +1,4 @@
-from nmigen import *
+from amaranth import *
 
 class EdgeDetector(Elaboratable):
     def __init__(self, pin):

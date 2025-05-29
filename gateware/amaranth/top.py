@@ -1,7 +1,7 @@
 import os
 import struct
 
-from nmigen import *
+from amaranth import *
 from n64_board import *
 from uart import UART
 from ice40_pll import PLL
@@ -21,10 +21,12 @@ class Top(Elaboratable):
         self.sdram = SDRAMController(self.sys_clk)
         self.sdram_arb = SDRAMArbiter(self.sdram)
 
-        self.trace = WishboneTrace(64, 256)
+        self.flash_trace = WishboneTrace(64, 256)
+        self.cart_trace = WishboneTrace(64, 512)
+        self.gpio = WishboneGPIO()
         self.timer = WishboneTimer()
 
-        self.cart = Cart(sys_clk, self.sdram_arb.ports[1])
+        self.cart = Cart(sys_clk, self.sdram_arb.ports[1], self.cart_trace)
         if self.with_cpu == "serv":
             self.cpu = SERV()
         elif self.with_cpu == "picorv32":
@@ -71,8 +73,10 @@ class Top(Elaboratable):
                 Peripheral(irom, 0, 512 * 4),
                 Peripheral(self.wb_uart, 0x10000000, 0x8),
                 Peripheral(self.flash, 0x20000000, 0x20*4),
-                Peripheral(self.trace, 0x30000000, self.trace.depth*4),
-                Peripheral(self.timer, 0x40000000, 4)
+                Peripheral(self.flash_trace, 0x30000000, self.flash_trace.depth*4),
+                Peripheral(self.timer, 0x40000000, 4),
+                Peripheral(self.gpio, 0x50000000, 4),
+                Peripheral(self.cart_trace, 0x60000000, self.cart_trace.depth*4),
             ])
 
             m.d.comb += self.cpu.bus.connect_to(decoder.bus)
@@ -81,9 +85,11 @@ class Top(Elaboratable):
         m.submodules.wb_uart = self.wb_uart
         m.submodules.decoder = decoder
         m.submodules.flash = self.flash
-        m.submodules.trace = self.trace
+        m.submodules.flash_trace = self.flash_trace
+        m.submodules.cart_trace = self.cart_trace
         m.submodules.timer = self.timer
-       
+        m.submodules.gpio = self.gpio
+
         data = Signal(16)
 
         write_happened = Signal()
@@ -92,6 +98,7 @@ class Top(Elaboratable):
         # Things get a bit wacky here - the address is in 16bit words.
         dram_addr = Signal(25)
         flash_addr = Signal(24)
+        flash_offset = 0x30_000
 
         buffer_r = self.buffer.read_port()
         buffer_w = self.buffer.write_port()
@@ -104,8 +111,8 @@ class Top(Elaboratable):
         m.submodules += buffer_w
 
         #m.submodules.uart = uart = self.uart
-        # Read from SPI flash into SDRAM on startup
 
+        # Read from SPI flash into SDRAM on startup
         if self.with_sdram:
             sdram_rd = self.sdram_arb.ports[0]
 
@@ -141,17 +148,19 @@ class Top(Elaboratable):
             m.d.sync += self.flash.mi.valid.eq(0)
             m.d.sync += buffer_w.en.eq(0)
 
-            self.trace_depth = self.trace.depth
+            self.trace_depth = self.flash_trace.depth
             self.my_trace_addr = Signal(range(self.trace_depth))
-            self.trace_addr = self.trace.addr
-            self.trace_data = self.trace.data
-            self.trace_en = self.trace.en
+            self.trace_addr = self.flash_trace.addr
+            self.trace_data = self.flash_trace.data
+            self.trace_en = self.flash_trace.en
             m.d.sync += self.trace_en.eq(0)
 
             with m.FSM() as fsm:
                 with m.State("wait"):
                     counter = Signal(32)
-                    with m.If(counter == 0x1000):
+                    # TODO: this has to happen AFTER the firmware sets up the SPI flash
+                    # add a register that pokes this block to go
+                    with m.If(self.gpio.io[0] == 1):
                         m.next = "wait_ready"
                     with m.Else():
                         m.d.sync += counter.eq(counter+1)
@@ -161,7 +170,7 @@ class Top(Elaboratable):
                             self.flash.mi.valid.eq(1),
                             self.flash.mi.rw.eq(1),
                             self.flash.mi.len.eq(0x10),
-                            self.flash.mi.addr.eq(flash_addr<<1)
+                            self.flash.mi.addr.eq((flash_addr<<1) + flash_offset)
                         ]
                         m.next = "mi_read"
                 with m.State("mi_read"):
@@ -186,7 +195,7 @@ class Top(Elaboratable):
                     ]
 
                     with m.If(self.trace_addr < (self.trace_depth-1)):
-                        m.d.sync += self.trace_data.eq(Cat(Const(0xaa, unsigned(8)), flash_addr, data))
+                        m.d.sync += self.trace_data.eq(Cat(Const(0x00, unsigned(8)), flash_addr, data))
                         m.d.sync += self.trace_en.eq(1)
                         m.d.sync += self.my_trace_addr.eq(self.my_trace_addr+1)
                         m.d.sync += self.trace_addr.eq(self.my_trace_addr)
@@ -197,7 +206,6 @@ class Top(Elaboratable):
                         flash_addr.eq(flash_addr+1),
                     ]
                     m.next = "mi_read"
-                        
         return m
 
     def ports(self):
@@ -213,7 +221,7 @@ class CartConcrete(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        n64 = platform.request("n64", xdr={'ad': 1, 'read': 1, 'write': 1, 'ale_l': 1, 'ale_h': 1})
+        n64 = platform.request("n64", xdr={'ad': 1, 'read': 1, 'write': 1, 'ale_l': 1, 'ale_h': 1, 'cold_reset': 1, 'nmi': 1 })
 
         sdram = platform.request("sdram", xdr = 
             { 
@@ -235,9 +243,13 @@ class CartConcrete(Elaboratable):
         uart_rx = platform.request("io",7)
         uart_rx_reg = Signal()
 
-        extra = platform.request("io", 15)
-        m.d.comb += [ extra.oe.eq(1),
-            extra.o.eq(n64.ale_l.i)
+        extra = platform.request("io", 5)
+        extra2 = platform.request("io", 4)
+        m.d.comb += [
+            extra.oe.eq(1),
+            extra2.oe.eq(1),
+            extra.o.eq(n64.read.i),
+            extra2.o.eq(0),
         ]
 
         top = Top(self.sys_clk, with_sdram=True, with_cpu = "picorv32", uart_baud = self.uart_baud)
@@ -262,7 +274,9 @@ class CartConcrete(Elaboratable):
             n64.ale_l.i_clk.eq(clk),
             n64.ale_h.i_clk.eq(clk),
             n64.ad.i_clk.eq(clk),
-            n64.ad.o_clk.eq(clk)
+            n64.ad.o_clk.eq(clk),
+            n64.cold_reset.i_clk.eq(clk),
+            n64.nmi.i_clk.eq(clk)
         ]
 
         m.d.comb += [
@@ -315,8 +329,6 @@ class CartConcrete(Elaboratable):
             sdram.dq.i_clk.eq(clk),
             sdram.dq.o_clk.eq(clk),
         ]
-
-
 
         m.submodules.top = top
 
@@ -400,12 +412,12 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1:
         if sys.argv[1] == "generate-top":
-            from nmigen.back import rtlil, verilog
+            from amaranth.back import rtlil, verilog
 
             top = Top(sys_clk=0.5)
             print(verilog.convert(top, ports=top.ports(), name="top"))
         if sys.argv[1] == "generate-top-sim":
-            from nmigen.back import rtlil, verilog
+            from amaranth.back import rtlil, verilog
 
             top = CartSim(sys_clk=0.5)
             print(verilog.convert(top, ports=top.ports(), name="top"))
@@ -413,7 +425,7 @@ if __name__ == "__main__":
             cart = CartSim(sys_clk=50)
             n64 = cart.n64
 
-            from nmigen.back import pysim
+            from amaranth.back import pysim
 
             sim = pysim.Simulator(cart)
             ports = [n64.ale_h.i, cart.n64.ale_l.i, n64.read.i, n64.write.i, n64.ad.i, n64.ad.o]
@@ -431,5 +443,5 @@ if __name__ == "__main__":
                 sim.run()
     else:
         platform = N64Platform()
-        concrete = CartConcretePLL(sys_clk = 10, uart_baud = 115200/2, uart_delay = 10000)
-        platform.build(concrete, read_verilog_opts="-I../serv/rtl", do_program=True)
+        concrete = CartConcretePLL(sys_clk = 50, uart_baud = 115200, uart_delay = 10000)
+        platform.build(concrete, read_verilog_opts="-I../external/serv/rtl", do_program=True)
