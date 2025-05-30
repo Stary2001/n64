@@ -237,18 +237,9 @@ class WishboneSPIFlash(Elaboratable):
             pad_clk = flash.clk._io
             pad_dq = flash.dq._io
         else:
-            pad_cs = Signal()
-            pad_clk = Signal()
+            pad_cs = IOPort(1, name="qspi_cs")
+            pad_clk = IOPort(1, name="qspi_clk")
             pad_dq = IOPort(4, name="qspi_dq")
-
-            #m.submodules.spiflash = Instance("spiflash",
-            #    i_csb = pad_cs,
-            #    i_clk = pad_clk,
-            #    io_io0 = pad_dq[0],
-            #    io_io1 = pad_dq[1],
-            #    io_io2 = pad_dq[2],
-            #    io_io3 = pad_dq[3]
-            #)
 
         m.submodules.phy = Instance("qpi_phy_ice40_1x",
             p_N_CS = 1,

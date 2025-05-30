@@ -24,18 +24,26 @@ class SDRAMArbiter(Elaboratable):
         m.submodules.sched = self.sched
 
         m.d.comb += self.sched.requests.eq(Cat((port.cmd.any()|port.cmd_ack.any()) for port in self.ports))
-        for i, port in enumerate(self.ports):
-            with m.Switch(self.sched.grant):
-                with m.Case(i):
-                    m.d.comb += [
-                        self.ctrl.cmd.eq(port.cmd),
-                        port.cmd_ack.eq(self.ctrl.cmd_ack),
-                        self.ctrl.data_out.eq(port.data_out),
-                        port.data_in.eq(self.ctrl.data_in),
-                        self.ctrl.addr.eq(port.addr),
-                        port.rd_valid.eq(self.ctrl.rd_valid),
-                        port.wr_valid.eq(self.ctrl.wr_valid),
-                    ]
+
+        with m.If(self.sched.valid):
+            for i, port in enumerate(self.ports):
+                with m.Switch(self.sched.grant):
+                    with m.Case(i):
+                        m.d.comb += [
+                            self.ctrl.cmd.eq(port.cmd),
+                            port.cmd_ack.eq(self.ctrl.cmd_ack),
+                            self.ctrl.data_out.eq(port.data_out),
+                            port.data_in.eq(self.ctrl.data_in),
+                            self.ctrl.addr.eq(port.addr),
+                            port.rd_valid.eq(self.ctrl.rd_valid),
+                            port.wr_valid.eq(self.ctrl.wr_valid),
+                        ]
+                    #with m.Default():
+                    #    m.d.comb += [
+                    #        self.ctrl.cmd.eq(0),
+                    #        self.ctrl.data_out.eq(0),
+                    #        self.ctrl.addr.eq(0)
+                    #    ]
         return m
 
 
@@ -109,6 +117,8 @@ class SDRAMController(Elaboratable):
         #    m.d.sync += cmd.eq(0b1111) # n_CS high - deassert
         
         # Initial cke/dqm states.
+        counter = Signal(32)
+        data_counter = Signal(8)
         
         refresh_timer = Signal(range(0,t_refresh*2))
         # always tick the refresh timer
@@ -116,20 +126,18 @@ class SDRAMController(Elaboratable):
 
         with m.FSM() as inner:
             with m.State("wait"):
-
                 m.d.sync += self.sdram.cke.eq(0)
                 m.d.sync += self.sdram.dqm.eq(0b11)
-
-                counter = Signal(16)
 
                 with m.If(counter < t_init):
                     m.d.sync += counter.eq(counter+1)
                 with m.Else():
+                    m.d.sync += counter.eq(0)
+
                     m.d.sync += self.sdram.cke.eq(1)
                     m.next = "precharge"
             
             with m.State("precharge"):
-                counter = Signal(4)
                 with m.If(counter == 0):
                     # cmd
                     m.d.sync += [
@@ -139,9 +147,9 @@ class SDRAMController(Elaboratable):
                 with m.If(counter < t_rp):
                     m.d.sync += counter.eq(counter+1)
                 with m.Else():
+                    m.d.sync += counter.eq(0)
                     m.next = "load_mode_reg_1"
             with m.State("load_mode_reg_1"):
-                counter = Signal(8)
                 with m.If(counter == 0):
                     # cmd
                     
@@ -160,7 +168,6 @@ class SDRAMController(Elaboratable):
                     m.next = "precharge_2"
             
             with m.State("precharge_2"):
-                counter = Signal(4)
                 with m.If(counter == 0):
                     # cmd
                     m.d.sync += [
@@ -169,12 +176,12 @@ class SDRAMController(Elaboratable):
                     ]
 
                 with m.If(counter < t_rp):
+                    m.d.sync += counter.eq(0)
                     m.d.sync += counter.eq(counter+1)
                 with m.Else():
                     m.next = "auto_refresh_aaa"
 
             with m.State("auto_refresh_aaa"):
-                counter = Signal(4)
                 refresh_count = Signal(3)
 
                 with m.If(counter == 0):
@@ -183,16 +190,15 @@ class SDRAMController(Elaboratable):
                 with m.If(counter < t_rc):
                     m.d.sync += counter.eq(counter+1)
                 with m.Else():
+                    m.d.sync += counter.eq(0)
                     with m.If(refresh_count < 1):
                         m.d.sync += [
                             refresh_count.eq(refresh_count+1),
-                            counter.eq(0)
                         ]
                     with m.Else():
                         m.next = "load_mode_reg_2"
 
             with m.State("load_mode_reg_2"):
-                counter = Signal(8)
                 with m.If(counter == 0):
                     # cmd
                     
@@ -206,6 +212,7 @@ class SDRAMController(Elaboratable):
                 with m.If(counter < t_mrd):
                     m.d.sync += counter.eq(counter+1)
                 with m.Else():
+                    m.d.sync += counter.eq(0)
                     m.d.sync += refresh_timer.eq(0)
                     m.d.sync += self.sdram.dqm.eq(0b00)
                     m.next = "done"
@@ -239,10 +246,10 @@ class SDRAMController(Elaboratable):
                         #m.d.sync += self.cmd_ack.eq(self.cmd)
                         m.next = "activate"
 
+                    m.d.sync += counter.eq(0)
                     m.d.sync += self.cmd_ack.eq(self.cmd)
             
             with m.State("refresh"):
-                counter = Signal(4)
                 with m.If(counter == 0):
                     m.d.sync += cmd.eq(0b0001)
                 with m.If(counter < t_rc-1):
@@ -253,7 +260,6 @@ class SDRAMController(Elaboratable):
                     m.next = "idle"
 
             with m.State("activate"):
-                counter = Signal(8)
                 with m.If(counter == 0):
                     m.d.sync += [
                         cmd.eq(0b0011),
@@ -262,51 +268,53 @@ class SDRAMController(Elaboratable):
                     ]
                 with m.If(counter < t_rcd-1):
                     m.d.sync += counter.eq(counter+1)
-                    with m.If(counter == t_rcd-2):
-                        m.d.sync += self.wr_valid.eq(1)
+                    #with m.If(counter == t_rcd-2):
+                    #    # Raise this a cycle early to allow for bram latency
+                    #    with m.If(writing):
+                    #        m.d.sync += self.wr_valid.eq(1)
                 with m.Else():
                     m.d.sync += counter.eq(0)
                     with m.If(reading):
                         m.next = "read_cmd"
                     with m.Elif(writing):
                         # Writes happen IMMEDIATELY after the command.
+                        m.d.sync += [
+                            self.sdram.data_oe.eq(1),
+                            self.wr_valid.eq(1)
+                        ]
+                        m.d.comb += self.sdram.data_out.eq(self.data_out)
 
-                        # pull this back a cycle
-                        # m.d.sync += self.wr_valid.eq(1)
-                        m.d.sync += self.sdram.data_oe.eq(1)
-                        m.d.sync += self.sdram.data_out.eq(self.data_out)
                         m.next = "write_cmd"
 
             with m.State("read_cmd"):
-                counter = Signal(8)
                 with m.If(counter == 0):
                     m.d.sync += [
                         cmd.eq(0b0101),
                         ram.addr.eq(col_addr),
                         ram.ba.eq(bank_addr)
                     ]
-                with m.If(counter < cas-1):
-                    m.d.sync += counter.eq(counter+1)
-                with m.Else():
+                with m.If(counter == cas-1):
+                    m.d.comb += self.data_in.eq(self.sdram.data_in)
                     m.d.sync += self.rd_valid.eq(1)
-                    m.d.sync += counter.eq(0)
+                    m.d.sync += data_counter.eq(0)
                     m.next = "read_data"
-            
+                with m.Else():
+                    m.d.sync += counter.eq(counter + 1)
+
             with m.State("read_data"):
-                counter = Signal(8)
+                m.d.comb += self.data_in.eq(self.sdram.data_in)
 
-                m.d.sync += self.data_in.eq(self.sdram.data_in)
-
-                with m.If(counter == 253):
+                with m.If(data_counter == 253):
                     m.d.sync += [
                         cmd.eq(0b0110), # Burst Terminate
                     ]
-                with m.If(counter == 255):
-                    m.d.sync += counter.eq(0)
+                with m.If(data_counter == 254):
                     m.d.sync += self.rd_valid.eq(0)
+                with m.If(data_counter == 255):
+                    m.d.sync += data_counter.eq(0)
                     m.next = "precharge"
                 with m.Else():
-                    m.d.sync += counter.eq(counter+1)
+                    m.d.sync += data_counter.eq(data_counter+1)
 
             with m.State("write_cmd"):
                 m.d.sync += [
@@ -314,26 +322,32 @@ class SDRAMController(Elaboratable):
                     ram.addr.eq(col_addr),
                     ram.ba.eq(bank_addr),
 
-                    self.sdram.data_out.eq(self.data_out)
+                    self.sdram.data_oe.eq(1),
+                   
+                    data_counter.eq(1)
                 ]
+                m.d.comb += self.sdram.data_out.eq(self.data_out)
                 m.next = "write_data"
 
             with m.State("write_data"):
-                counter = Signal(8)
-                m.d.sync += self.sdram.data_out.eq(self.data_out)
-                with m.If(counter == 255):
-                    m.d.sync += [
-                        cmd.eq(0b0110), # Burst Terminate
-                    ]
-                    m.d.sync += self.sdram.data_oe.eq(0)
+                m.d.comb += self.sdram.data_out.eq(self.data_out)
+                with m.If(data_counter == 255):
                     m.d.sync += self.wr_valid.eq(0)
-                    m.d.sync += counter.eq(0)
-                    m.next = "precharge"
-                
-                m.d.sync += counter.eq(counter+1)
+                    m.next = "terminate"
+                with m.Else():
+                    m.d.sync += data_counter.eq(data_counter+1)
 
+            with m.State("terminate"):
+                m.d.sync += [
+                        cmd.eq(0b0110), # Burst Terminate
+                ]
+                m.d.sync += self.sdram.data_oe.eq(0)
+                m.d.sync += counter.eq(0)
+                m.d.sync += data_counter.eq(0)
+
+                m.next = "precharge"
+            
             with m.State("precharge"):
-                counter = Signal(8)
                 with m.If(counter == 0):
                     m.d.sync += [
                         cmd.eq(0b0010),

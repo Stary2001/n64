@@ -37,10 +37,26 @@ module tb_top();
   reg clk;
   reg rst;
 
-// module sdr (Dq, Addr, Ba, Clk, Cke, Cs_n, Ras_n, Cas_n, We_n, Dqm);
- wire [3:0] dq;
+  wire qspi_csb;
+  wire qspi_clk;
+  wire [3:0] qspi_dq;
 
- top top(rst, qspi_dq, clk);
+ spiflash qspi(
+  .clk(qspi_clk),
+  .csb(qspi_csb),
+  .io0(qspi_dq[0]),
+  .io1(qspi_dq[1]),
+  .io2(qspi_dq[2]),
+  .io3(qspi_dq[3])
+ );
+
+ top top(
+  .clk(clk),
+  .rst(rst),
+  .qspi_clk(qspi_clk),
+  .qspi_cs(qspi_csb),
+  .qspi_dq(qspi_dq)
+ );
 
 `ifdef IVERILOG
  initial

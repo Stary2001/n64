@@ -47,17 +47,23 @@ class MockN64(Elaboratable):
         #dummy = Signal()
 
         counter = Signal(16)
-        state = Signal(16)
+        index = Signal(5)
+
+        # For some reason iverilog ?
+        # Why?
 
         clk_period = 1/50e6
         delays = [1, 120, 80, 50, 50, 1040, 300, 60, 300, 60]
         # [11, 7, 3, 3, 52, 16, 4, 16, 4]
         delays = list(map(lambda a: math.ceil(a*1e-9/clk_period)-1, delays))
+        #print(delays)
         
         #import sys
         #sys.stderr.write(str(delays)+"\n")
 
-        delays = Array(delays)
+        #delays = Array(delays)
+        #print(delays)
+    
         signals = Array([
             ale_h.i, # rise
             ale_l.i, # rise
@@ -105,17 +111,32 @@ class MockN64(Elaboratable):
                     m.d.sync += counter.eq(counter+1)
 
             with m.State("wait"):
-                with m.If(counter == delays[state]):
-                    m.d.sync += signals[state].eq(values[state])
-                    m.d.sync += n64.ad.i.eq(addrs[state])
-                    m.d.sync += state.eq(state+1)
+                curr_delay = Signal(16)
+                
+                with m.Switch(index):
+                    for i,d in enumerate(delays):
+                        with m.Case(i):
+                            m.d.comb += curr_delay.eq(d)
+                    with m.Default():
+                        m.d.comb += curr_delay.eq(0xffff)
+
+                with m.If(counter >= curr_delay):
+                    with m.Switch(index):
+                        for i,d in enumerate(zip(signals, values)):
+                            with m.Case(i):
+                                m.d.sync += d[0].eq(d[1])
+                                m.d.sync += n64.ad.i.eq(addrs[i])
+                        with m.Default():
+                            pass
+
+                    m.d.sync += index.eq(index+1)
 
                     m.d.sync += counter.eq(0)
-                    with m.If(state == len(delays)-1):
-                        m.d.sync += state.eq(0)
+                    with m.If(index == len(delays)-1):
+                        m.d.sync += index.eq(0)
                         m.d.sync += cur_addr.eq(cur_addr+4)
                     with m.Else():
-                        m.d.sync += state.eq(state+1)
+                        m.d.sync += index.eq(index+1)
                 with m.Else():
                     m.d.sync += counter.eq(counter+1)
 

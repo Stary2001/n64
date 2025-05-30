@@ -44,7 +44,7 @@ module spiflash (
 	inout io2,
 	inout io3
 );
-	localparam verbose = 1;
+	localparam verbose = 0;
 	localparam integer latency = 8;
 
 	reg [7:0] buffer;
@@ -105,7 +105,7 @@ module spiflash (
 	reg [1023:0] firmware_file;
 	initial begin
 		if (!$value$plusargs("firmware=%s", firmware_file))
-			firmware_file = "cart.hex";
+			firmware_file = "build/flash.hex";
 		$readmemh(firmware_file, memory);
 	end
 

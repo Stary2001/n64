@@ -2,6 +2,8 @@ import os
 import struct
 
 from amaranth import *
+import amaranth.lib.memory # as lib
+
 from n64_board import *
 from uart import UART
 from ice40_pll import PLL
@@ -35,7 +37,7 @@ class Top(Elaboratable):
             raise Exception("pls")
         
         #self.uart = UART(int(self.sys_clk//115200))
-        self.buffer = Memory(width=16, depth=256)
+        self.buffer = amaranth.lib.memory.Memory(shape=unsigned(16), depth=256, init=[])
         self.wb_uart = WishboneUART(int(self.sys_clk//self.uart_baud))
 
         self.flash = WishboneSPIFlash()
@@ -100,19 +102,19 @@ class Top(Elaboratable):
         flash_addr = Signal(24)
         flash_offset = 0x30_000
 
-        buffer_r = self.buffer.read_port()
         buffer_w = self.buffer.write_port()
+        buffer_r = self.buffer.read_port(transparent_for=(buffer_w,))
         buffer_full = Signal()
 
         m.d.comb += buffer_r.addr.eq(dram_addr & 0xff)
         m.d.comb += buffer_w.addr.eq(flash_addr & 0xff)
 
-        m.submodules += buffer_r
-        m.submodules += buffer_w
+        m.submodules += self.buffer
 
         #m.submodules.uart = uart = self.uart
 
         # Read from SPI flash into SDRAM on startup
+        # buffer -> SDRAM
         if self.with_sdram:
             sdram_rd = self.sdram_arb.ports[0]
 
@@ -132,10 +134,14 @@ class Top(Elaboratable):
                         #m.d.sync += dram_addr.eq(0)
                         m.next = "write"
                 with m.State("write"):
+                    m.d.comb += sdram_rd.data_out.eq(buffer_r.data)
+                    m.d.sync += sdram_rd.addr.eq(dram_addr)
+                    
                     with m.If(sdram_rd.wr_valid):
                         m.d.sync += write_happened.eq(1)
                         m.d.sync += dram_addr.eq(dram_addr+1)
-                        m.d.comb += sdram_rd.data_out.eq(buffer_r.data)
+
+                        #m.d.comb += sdram_rd.data_out.eq(buffer_r.data)
                     with m.Else():
                         with m.If(write_happened):
                             m.d.sync += write_happened.eq(0)
@@ -155,11 +161,13 @@ class Top(Elaboratable):
             self.trace_en = self.flash_trace.en
             m.d.sync += self.trace_en.eq(0)
 
+            # SPI flash -> read buffer
             with m.FSM() as fsm:
                 with m.State("wait"):
                     counter = Signal(32)
-                    # TODO: this has to happen AFTER the firmware sets up the SPI flash
-                    # add a register that pokes this block to go
+
+                    m.d.sync += buffer_full.eq(0)
+                    # Firmware writes to io 0 when SPI flash is setup
                     with m.If(self.gpio.io[0] == 1):
                         m.next = "wait_ready"
                     with m.Else():
@@ -169,15 +177,15 @@ class Top(Elaboratable):
                         m.d.sync += [
                             self.flash.mi.valid.eq(1),
                             self.flash.mi.rw.eq(1),
-                            self.flash.mi.len.eq(0x10),
+                            self.flash.mi.len.eq(64), # adjust this for time to first read ...
                             self.flash.mi.addr.eq((flash_addr<<1) + flash_offset)
                         ]
                         m.next = "mi_read"
                 with m.State("mi_read"):
                     data = Signal(32)
                     with m.If(self.flash.mi.rlast):
-                        with m.If((flash_addr&0x40) == 0):
-                             m.d.sync += buffer_full.eq(1)
+                        with m.If((flash_addr & 0xff) == 0):
+                            m.d.sync += buffer_full.eq(1)
 
                         m.next = "wait_ready"
                     with m.Elif(self.flash.mi.rstb):

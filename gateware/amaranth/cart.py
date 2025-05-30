@@ -2,6 +2,7 @@ import os
 import struct
 
 from amaranth import *
+import amaranth.lib.memory
 from misc import EdgeDetector
 
 class Cart(Elaboratable):
@@ -26,7 +27,7 @@ class Cart(Elaboratable):
         self.trace_data = trace.data
         self.trace_en = trace.en
 
-        self.buffer = Memory(depth=256, width=16)
+        self.buffer = amaranth.lib.memory.Memory(shape=unsigned(16), depth=256, init=[])
 
     def elaborate(self, platform):
         m = Module()
@@ -38,8 +39,9 @@ class Cart(Elaboratable):
         m.submodules.read_edge = read_edge = EdgeDetector(self.n64.read)
         m.submodules.ale_l_edge = ale_l_edge = EdgeDetector(self.n64.ale_l)
 
-        m.submodules.buffer_rd = buffer_rd = self.buffer.read_port()
-        m.submodules.buffer_wr = buffer_wr = self.buffer.write_port()
+        m.submodules.buffer = self.buffer
+        buffer_wr = self.buffer.write_port()
+        buffer_rd = self.buffer.read_port(transparent_for=(buffer_wr,))
 
         m.d.sync += self.trace_en.eq(0)
 
@@ -64,6 +66,7 @@ class Cart(Elaboratable):
                 ]
             m.d.sync += edge_counter.eq(edge_counter+1)
 
+        m.d.sync += buffer_wr.en.eq(0)
         with m.If(do_sdram_read):
             with m.FSM() as fsm:
                 with m.State("wait_ack"):
@@ -82,20 +85,23 @@ class Cart(Elaboratable):
                             read_began.eq(1),
                             buffer_wr.en.eq(1),
                             buffer_wr.addr.eq(addr_counter),
-                            addr_counter.eq(addr_counter+1),
                             buffer_wr.data.eq(self.sdram_port.data_in)
                         ]
+                        with m.If(read_began):
+                            m.d.sync += addr_counter.eq(addr_counter+1)
                     with m.Elif(read_began):
                         m.next = "done"
                 with m.State("done"):
                     m.d.sync += do_sdram_read.eq(0)
                     m.next = "wait_ack"
 
-        m.d.comb += buffer_rd.addr.eq(addr&0xff)
+        m.d.comb += buffer_rd.addr.eq((addr >> 1) &0xff)
 
+        m.d.comb += self.n64.ad_o.eq(buffer_rd.data)
+    
         with m.If(read_edge.fall):
             m.d.sync += self.n64.ad_oe.eq(1)
-            m.d.comb += self.n64.ad_o.eq(buffer_rd.data)
+            #m.d.comb += self.n64.ad_o.eq(buffer_rd.data)
 
             with m.If(self.trace_addr < (self.trace_depth-1)):
                 m.d.sync += self.trace_en.eq(1)

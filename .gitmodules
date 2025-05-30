@@ -1,3 +1,0 @@
-[submodule "gateware/nmigen/serv"]
-	path = gateware/nmigen/serv
-	url = https://github.com/olofk/serv.git

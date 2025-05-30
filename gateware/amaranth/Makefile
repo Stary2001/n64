@@ -22,7 +22,14 @@ build/cart_tb_cxxrtl: build/cart_tb.cpp cxxrtl/main.cpp
 build/cart_tb.cpp: $(V_FILES)
 	$(YOSYS) cxxrtl/proc.ys
 
-cart.vcd: build/cart_tb
+build/flash.bin:
+	truncate --size 8M build/flash.bin
+	dd if='Super Mario 64 (USA).n64' of=build/flash.bin conv=notrunc bs=4K oseek=48
+
+build/flash.hex: build/flash.bin
+	python make_hex.py build/flash.bin build/flash.hex
+
+cart.vcd: build/cart_tb build/flash.hex
 	./build/cart_tb
 
 cart_cxxrtl.vcd: build/cart_tb_cxxrtl
